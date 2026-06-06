@@ -12,7 +12,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail ?? "Request failed");
+    const detail = error.detail;
+    const message = Array.isArray(detail)
+      ? detail.map((e: { msg: string }) => e.msg).join(", ")
+      : (detail ?? "Request failed");
+    throw new Error(message);
   }
   return res.json() as Promise<T>;
 }

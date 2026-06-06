@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"d:/Github_My_repo/OreganSales_CRM/.claude/plan\")",
+      "PowerShell(Get-ChildItem -Recurse -File \"d:\\\\Github_My_repo\\\\OreganSales_CRM\" | Where-Object { $_.FullName -notmatch '\\\\.claude|ARCHITECTURE|PROJECT\\\\.md|PLAN\\\\.md|AGENTS\\\\.md|CLAUDE\\\\.md' } | ForEach-Object { $_.FullName.Replace\\('d:\\\\Github_My_repo\\\\OreganSales_CRM\\\\', ''\\) } | Sort-Object)"
+    ],
+    "additionalDirectories": [
+      "d:\\Github_My_repo\\OreganSales_CRM\\.claude"
+    ]
+  }
+}

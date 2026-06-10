@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.style_summarizer import run_style_summarizer
 from app.auth.dependencies import get_current_user
 from app.db import get_db
-from app.llm.client import llm_client
+from app.llm.client import LLMClient, get_llm_client
 from app.models.style import SampleMessage, StyleCategory, StyleProfile
 from app.models.user import User
 
@@ -249,6 +249,7 @@ async def summarize(
     channel: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
 ) -> Any:
     _check_channel(channel)
 
@@ -277,7 +278,7 @@ async def summarize(
         style_md = await run_style_summarizer(
             [(s.label, s.raw_content) for s in samples],
             channel,
-            llm_client,
+            llm,
             categories=category_names if category_names else None,
         )
     except Exception as exc:

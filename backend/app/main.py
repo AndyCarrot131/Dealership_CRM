@@ -1,9 +1,7 @@
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
 
 from app.api.auth import router as auth_router
 from app.api.chat import router as chat_router
@@ -13,34 +11,8 @@ from app.api.inventory import router as inventory_router
 from app.api.outreach import router as outreach_router
 from app.api.settings import router as settings_router
 from app.api.style import router as style_router
-from app.config import settings
-from app.db import AsyncSessionLocal
-from app.models.app_setting import AppSetting
-from app.services.llm_config import set_llm_runtime_config
 
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(AppSetting).where(
-                    AppSetting.key.in_(["llm_base_url", "llm_api_key", "llm_model"])
-                )
-            )
-            rows = {row.key: row.value for row in result.scalars()}
-            if rows:
-                set_llm_runtime_config(
-                    base_url=rows.get("llm_base_url", settings.llm_base_url),
-                    api_key=rows.get("llm_api_key", settings.llm_api_key),
-                    model=rows.get("llm_model", settings.llm_model),
-                )
-    except Exception:
-        pass
-    yield
-
-
-app = FastAPI(title="Dealer CRM", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Dealer CRM", version="0.1.0")
 
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(customers_router, prefix="/api/customers")

@@ -11,7 +11,7 @@ from app.agents.email_composer import compose_email
 from app.agents.rule_parser import run_rule_parser
 from app.auth.dependencies import get_current_user
 from app.db import get_db
-from app.llm.client import llm_client
+from app.llm.client import LLMClient, get_llm_client
 from app.models.customer import Customer
 from app.models.interaction import Interaction
 from app.models.inventory import Inventory
@@ -130,8 +130,9 @@ async def create_rule(
     body: RuleCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
 ) -> OutreachRule:
-    compiled = await _parse_rule(body.rule_text)
+    compiled = await _parse_rule(body.rule_text, llm)
     rule = OutreachRule(
         sales_id=current_user.id,
         name=body.name.strip(),
@@ -153,6 +154,7 @@ async def update_rule(
     body: RuleUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
 ) -> OutreachRule:
     rule = await _fetch_rule(rule_id, current_user, db)
 
@@ -160,7 +162,7 @@ async def update_rule(
         rule.name = body.name.strip()
     if body.rule_text is not None:
         rule.rule_text = body.rule_text.strip()
-        rule.compiled_filter = await _parse_rule(body.rule_text)
+        rule.compiled_filter = await _parse_rule(body.rule_text, llm)
     if body.cadence_days is not None:
         rule.cadence_days = body.cadence_days
     if body.active is not None:
@@ -212,6 +214,7 @@ async def run_rule(
     body: RunRequest = Body(default=RunRequest()),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
 ) -> RunResult:
     rule = await _fetch_rule(rule_id, current_user, db)
 
@@ -269,7 +272,7 @@ async def run_rule(
                 customer_dict,
                 matching_inv,
                 style_md,
-                llm_client,
+                llm,
                 email_type=effective_email_type,
                 custom_template=effective_template,
             )
@@ -401,9 +404,9 @@ def _rule_to_dict(rule: OutreachRule) -> dict:
     return base
 
 
-async def _parse_rule(rule_text: str) -> dict:
+async def _parse_rule(rule_text: str, llm: LLMClient) -> dict:
     try:
-        return await run_rule_parser(rule_text, llm_client)
+        return await run_rule_parser(rule_text, llm)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

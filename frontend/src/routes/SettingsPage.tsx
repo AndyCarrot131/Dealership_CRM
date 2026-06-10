@@ -58,7 +58,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (tab === "users" && isManager) loadUsers();
-    if (tab === "llm" && isManager) loadLLMConfig();
+    if (tab === "llm") loadLLMConfig();
   }, [tab]);
 
   async function loadUsers() {
@@ -142,7 +142,7 @@ export default function SettingsPage() {
     }
   }
 
-  const tabs: Tab[] = ["account", ...(isManager ? (["users", "llm"] as Tab[]) : [])];
+  const tabs: Tab[] = ["account", ...(isManager ? (["users"] as Tab[]) : []), "llm"];
 
   return (
     <div style={{ padding: "32px 40px", maxWidth: 760 }}>
@@ -398,9 +398,12 @@ export default function SettingsPage() {
       )}
 
       {/* LLM tab */}
-      {tab === "llm" && isManager && (
+      {tab === "llm" && (
         <div className="card" style={{ padding: 24, maxWidth: 480 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 20 }}>LLM Configuration</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>LLM Configuration</h3>
+          <p style={{ fontSize: 13, color: "var(--color-text-3)", marginBottom: 20 }}>
+            These settings apply to your account only.
+          </p>
           <form
             onSubmit={handleSaveLLM}
             style={{ display: "flex", flexDirection: "column", gap: 14 }}

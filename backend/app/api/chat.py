@@ -11,7 +11,7 @@ from app.agents.intake import run_intake
 from app.agents.update import run_update
 from app.auth.dependencies import get_current_user
 from app.db import get_db
-from app.llm.client import llm_client
+from app.llm.client import LLMClient, get_llm_client
 from app.models.customer import Customer, CustomerCar
 from app.models.user import User
 
@@ -110,6 +110,7 @@ async def chat(
     body: ChatRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
 ) -> ChatResponse:
     history = [{"role": m.role, "content": m.content} for m in body.history]
     history.append({"role": "user", "content": body.message})
@@ -123,14 +124,14 @@ async def chat(
                 )
             customer = await _fetch_owned_customer(body.customer_id, current_user, db)
             snapshot = _customer_snapshot(customer)
-            result = await run_update(history, snapshot, llm_client)
+            result = await run_update(history, snapshot, llm)
             return ChatResponse(
                 reply=result["reply"],
                 intent=result["intent"],
                 pending_fields=result.get("diff"),
             )
         else:
-            result = await run_intake(history, llm_client)
+            result = await run_intake(history, llm)
             return ChatResponse(
                 reply=result["reply"],
                 intent=result["intent"],

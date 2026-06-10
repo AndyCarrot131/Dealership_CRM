@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user, require_manager
 from app.auth.hashing import hash_password, verify_password
 from app.db import get_db
-from app.models.app_setting import AppSetting
 from app.models.user import User
 from app.schemas.settings import (
     ChangePasswordRequest,
@@ -14,7 +13,7 @@ from app.schemas.settings import (
     LLMConfigUpdate,
     UserListItem,
 )
-from app.services.llm_config import get_llm_runtime_config, set_llm_runtime_config
+from app.services.llm_config import resolve_llm_config, save_llm_config
 
 router = APIRouter(tags=["settings"])
 
@@ -74,54 +73,32 @@ def _mask_api_key(key: str) -> str:
 
 @router.get("/llm", response_model=LLMConfigOut)
 async def get_llm_config(
-    _: User = Depends(require_manager),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> LLMConfigOut:
-    cfg = get_llm_runtime_config()
-    try:
-        result = await db.execute(
-            select(AppSetting).where(AppSetting.key.in_(["llm_base_url", "llm_api_key", "llm_model"]))
-        )
-        rows = {row.key: row.value for row in result.scalars()}
-    except Exception:
-        rows = {}
+    cfg = await resolve_llm_config(db, current_user.id)
     return LLMConfigOut(
-        base_url=rows.get("llm_base_url", cfg.base_url),
-        api_key_masked=_mask_api_key(rows.get("llm_api_key", cfg.api_key)),
-        model=rows.get("llm_model", cfg.model),
+        base_url=cfg.base_url,
+        api_key_masked=_mask_api_key(cfg.api_key),
+        model=cfg.model,
     )
 
 
 @router.put("/llm")
 async def update_llm_config(
     body: LLMConfigUpdate,
-    _: User = Depends(require_manager),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    existing_key_row = await db.execute(select(AppSetting).where(AppSetting.key == "llm_api_key"))
-    existing_row = existing_key_row.scalar_one_or_none()
+    current = await resolve_llm_config(db, current_user.id)
+    final_api_key = body.api_key.strip() if body.api_key.strip() else current.api_key
 
-    current_api_key = existing_row.value if existing_row else get_llm_runtime_config().api_key
-    final_api_key = body.api_key.strip() if body.api_key.strip() else current_api_key
-
-    updates = {
-        "llm_base_url": body.base_url,
-        "llm_api_key": final_api_key,
-        "llm_model": body.model,
-    }
-
-    for key, value in updates.items():
-        row_result = await db.execute(select(AppSetting).where(AppSetting.key == key))
-        row = row_result.scalar_one_or_none()
-        if row:
-            row.value = value
-        else:
-            db.add(AppSetting(key=key, value=value))
-
-    await db.commit()
-    set_llm_runtime_config(
-        base_url=updates["llm_base_url"],
+    await save_llm_config(
+        db,
+        current_user.id,
+        base_url=body.base_url,
         api_key=final_api_key,
-        model=updates["llm_model"],
+        model=body.model,
     )
+    await db.commit()
     return {"message": "LLM settings updated"}

@@ -10,7 +10,16 @@ from alembic import context
 
 # Import Base and all models so autogenerate detects them
 from app.db import Base
-from app.models import user, customer, interaction, inventory, style, outreach  # noqa: F401
+from app.models import (  # noqa: F401
+    app_setting,
+    customer,
+    interaction,
+    inventory,
+    outreach,
+    style,
+    user,
+    user_setting,
+)
 
 config = context.config
 

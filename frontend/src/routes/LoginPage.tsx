@@ -25,30 +25,50 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 360, margin: "100px auto", padding: "0 16px" }}>
-      <h1 style={{ marginBottom: 24, fontSize: 24 }}>Dealer CRM</h1>
-      <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <input
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-          autoComplete="email"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-          autoComplete="current-password"
-        />
-        {error && <p style={{ color: "red", fontSize: 14 }}>{error}</p>}
-        <button type="submit" disabled={loading}>
-          {loading ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+    <div className="login-page">
+      <div className="card login-card">
+        <div style={{ marginBottom: 28, textAlign: "center" }}>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "var(--color-text)", marginBottom: 4 }}>
+            Welcome back
+          </h1>
+          <p style={{ fontSize: 13, color: "var(--color-text-3)" }}>Sign in to Dealer CRM</p>
+        </div>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label className="form-label">Email</label>
+            <input
+              className="input"
+              type="email"
+              placeholder="you@dealership.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              autoComplete="email"
+            />
+          </div>
+          <div>
+            <label className="form-label">Password</label>
+            <input
+              className="input"
+              type="password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              autoComplete="current-password"
+            />
+          </div>
+          {error && <div className="notice notice-danger">{error}</div>}
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn btn-primary"
+            style={{ width: "100%", justifyContent: "center", marginTop: 4 }}
+          >
+            {loading ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

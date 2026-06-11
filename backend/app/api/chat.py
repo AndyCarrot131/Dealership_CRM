@@ -31,10 +31,18 @@ class ChatRequest(BaseModel):
     customer_id: Optional[int] = None
 
 
+class PendingDraft(BaseModel):
+    customer_id: int
+    customer_name: str
+    subject: str
+    body: str
+
+
 class ChatResponse(BaseModel):
     reply: str
     intent: str
     pending_fields: Optional[dict[str, Any]] = None
+    pending_draft: Optional[PendingDraft] = None
 
 
 class ConfirmRequest(BaseModel):
@@ -118,8 +126,16 @@ async def chat(
 
     try:
         if body.mode == "assistant":
-            reply = await run_assistant(history, current_user, db, llm)
-            return ChatResponse(reply=reply, intent="assistant", pending_fields=None)
+            result = await run_assistant(history, current_user, db, llm)
+            return ChatResponse(
+                reply=result["reply"],
+                intent=result["intent"],
+                pending_draft=(
+                    PendingDraft(**result["pending_draft"])
+                    if result.get("pending_draft")
+                    else None
+                ),
+            )
         elif body.mode == "update":
             if body.customer_id is None:
                 raise HTTPException(

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { api } from "../api/client";
 
 interface Interaction {
@@ -21,6 +21,52 @@ const CHANNELS: { value: string; label: string; color: string; bg: string }[] = 
   { value: "email", label: "Email", color: "#ea580c", bg: "#ffedd5" },
   { value: "in-person", label: "In-Person", color: "#7c3aed", bg: "#ede9fe" },
 ];
+
+function SummaryCell({
+  interaction,
+  expandedSummaries,
+  toggle,
+}: {
+  interaction: Interaction;
+  expandedSummaries: Set<number>;
+  toggle: (id: number) => void;
+}) {
+  const expanded = expandedSummaries.has(interaction.id);
+  const long = interaction.summary.length > 100;
+  return (
+    <td style={{ padding: "8px 12px", color: "#444", maxWidth: 420 }}>
+      <div
+        style={
+          expanded
+            ? undefined
+            : {
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }
+        }
+      >
+        {interaction.summary}
+      </div>
+      {long && (
+        <button
+          onClick={() => toggle(interaction.id)}
+          style={{
+            background: "none",
+            border: "none",
+            color: "#2563eb",
+            cursor: "pointer",
+            fontSize: 11,
+            padding: "2px 0 0",
+          }}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </td>
+  );
+}
 
 function ChannelBadge({ channel }: { channel: string }) {
   const ch = CHANNELS.find((c) => c.value === channel) ?? { label: channel, color: "#666", bg: "#e5e7eb" };
@@ -64,6 +110,9 @@ export default function ContactsPage() {
 
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
+
+  const [expandedCustomers, setExpandedCustomers] = useState<Set<number>>(new Set());
+  const [expandedSummaries, setExpandedSummaries] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     Promise.all([
@@ -115,6 +164,25 @@ export default function ContactsPage() {
     if (q && !i.customer_name.toLowerCase().includes(q) && !i.summary.toLowerCase().includes(q)) return false;
     return true;
   });
+
+  const groups = useMemo(() => {
+    const map = new Map<number, { customer_id: number; customer_name: string; interactions: Interaction[] }>();
+    for (const i of visible) {
+      if (!map.has(i.customer_id)) {
+        map.set(i.customer_id, { customer_id: i.customer_id, customer_name: i.customer_name, interactions: [] });
+      }
+      map.get(i.customer_id)!.interactions.push(i);
+    }
+    return Array.from(map.values());
+  }, [visible]);
+
+  function toggleSummary(id: number) {
+    setExpandedSummaries((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
 
   const cell: React.CSSProperties = { padding: "8px 12px" };
   const inputStyle: React.CSSProperties = {
@@ -247,7 +315,7 @@ export default function ContactsPage() {
             ))}
           </select>
           {(search || channelFilter) && (
-            <span style={{ fontSize: 13, color: "#888" }}>{visible.length} of {interactions.length}</span>
+            <span style={{ fontSize: 13, color: "#888" }}>{groups.length} customers, {visible.length} of {interactions.length} logs</span>
           )}
         </div>
 
@@ -260,7 +328,7 @@ export default function ContactsPage() {
           <p style={{ color: "#888" }}>No results match your filters.</p>
         )}
 
-        {visible.length > 0 && (
+        {groups.length > 0 && (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
             <thead>
               <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", color: "#555" }}>
@@ -272,26 +340,71 @@ export default function ContactsPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((i) => (
-                <tr key={i.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td style={{ ...cell, color: "#666", whiteSpace: "nowrap" }}>
-                    {new Date(i.contacted_at).toLocaleDateString()}
-                  </td>
-                  <td style={cell}>
-                    <ChannelBadge channel={i.channel} />
-                  </td>
-                  <td style={{ ...cell, fontWeight: 500 }}>{i.customer_name}</td>
-                  <td style={{ ...cell, color: "#444" }}>{i.summary}</td>
-                  <td style={cell}>
-                    <button
-                      onClick={() => handleDelete(i.id)}
-                      style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {groups.map((group) => {
+                const [latest, ...rest] = group.interactions;
+                const isOpen = expandedCustomers.has(group.customer_id);
+                const hasMore = rest.length > 0;
+
+                function toggleGroup() {
+                  setExpandedCustomers((prev) => {
+                    const next = new Set(prev);
+                    next.has(group.customer_id) ? next.delete(group.customer_id) : next.add(group.customer_id);
+                    return next;
+                  });
+                }
+
+                return (
+                  <React.Fragment key={group.customer_id}>
+                    <tr style={{ borderBottom: isOpen ? "none" : "1px solid #f0f0f0" }}>
+                      <td style={{ ...cell, color: "#666", whiteSpace: "nowrap" }}>
+                        <span
+                          onClick={hasMore ? toggleGroup : undefined}
+                          style={{ cursor: hasMore ? "pointer" : "default", userSelect: "none", marginRight: 6, display: "inline-block", width: 12 }}
+                        >
+                          {hasMore ? (isOpen ? "▾" : "▸") : ""}
+                        </span>
+                        {new Date(latest.contacted_at).toLocaleDateString()}
+                      </td>
+                      <td style={cell}><ChannelBadge channel={latest.channel} /></td>
+                      <td style={{ ...cell, fontWeight: 500 }}>
+                        {group.customer_name}
+                        {hasMore && !isOpen && (
+                          <span style={{ fontSize: 11, color: "#888", fontWeight: 400, marginLeft: 6 }}>
+                            +{rest.length} more
+                          </span>
+                        )}
+                      </td>
+                      <SummaryCell interaction={latest} expandedSummaries={expandedSummaries} toggle={toggleSummary} />
+                      <td style={cell}>
+                        <button
+                          onClick={() => handleDelete(latest.id)}
+                          style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                    {isOpen && rest.map((i, idx) => (
+                      <tr key={i.id} style={{ borderBottom: idx === rest.length - 1 ? "1px solid #f0f0f0" : "none", background: "#fafafa" }}>
+                        <td style={{ ...cell, color: "#888", whiteSpace: "nowrap", paddingLeft: 28 }}>
+                          {new Date(i.contacted_at).toLocaleDateString()}
+                        </td>
+                        <td style={cell}><ChannelBadge channel={i.channel} /></td>
+                        <td style={cell} />
+                        <SummaryCell interaction={i} expandedSummaries={expandedSummaries} toggle={toggleSummary} />
+                        <td style={cell}>
+                          <button
+                            onClick={() => handleDelete(i.id)}
+                            style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}

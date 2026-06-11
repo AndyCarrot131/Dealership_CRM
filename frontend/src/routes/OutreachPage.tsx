@@ -44,6 +44,8 @@ interface MatchedCustomer {
   full_name: string;
   note: string | null;
   last_contacted_at: string | null;
+  email: string | null;
+  phone: string | null;
   cars: MatchedCustomerCar[];
 }
 
@@ -363,6 +365,8 @@ function RunModal({
   const [customTemplate, setCustomTemplate] = useState(rule.custom_template || "");
   const [selectedCustomId, setSelectedCustomId] = useState<string | null>(null);
   const [customEmailTypes, setCustomEmailTypes] = useState<CustomEmailType[]>(loadCustomTypes);
+  const [customerChannels, setCustomerChannels] = useState<Record<number, "email" | "text">>({});
+  const [ignoredCustomers, setIgnoredCustomers] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -380,6 +384,11 @@ function RunModal({
         if (!cancelled) {
           setCustomers(data.customers);
           setStyleGuideActive(data.style_guide_active);
+          const initial: Record<number, "email" | "text"> = {};
+          for (const c of data.customers) {
+            initial[c.id] = !c.email && c.phone ? "text" : "email";
+          }
+          setCustomerChannels(initial);
           setStep("ready");
         }
       })
@@ -433,9 +442,13 @@ function RunModal({
     setStep("generating");
     setError(null);
     try {
+      const activeChannels = Object.fromEntries(
+        Object.entries(customerChannels).filter(([id]) => !ignoredCustomers.has(Number(id)))
+      );
       const result = await api.post<RunResult>(`/outreach/rules/${rule.id}/run`, {
         email_type: emailType,
         custom_template: emailType === "custom" ? customTemplate.trim() || null : null,
+        customer_channels: activeChannels,
       });
       setDraftsCreated(result.drafts_created);
       setStep("done");
@@ -511,7 +524,22 @@ function RunModal({
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {customers.map((c) => (
-                      <MatchedCustomerRow key={c.id} customer={c} />
+                      <MatchedCustomerRow
+                        key={c.id}
+                        customer={c}
+                        channel={customerChannels[c.id] ?? "email"}
+                        ignored={ignoredCustomers.has(c.id)}
+                        onChannelChange={(id, ch) =>
+                          setCustomerChannels((prev) => ({ ...prev, [id]: ch }))
+                        }
+                        onIgnore={(id) =>
+                          setIgnoredCustomers((prev) => {
+                            const next = new Set(prev);
+                            next.has(id) ? next.delete(id) : next.add(id);
+                            return next;
+                          })
+                        }
+                      />
                     ))}
                   </div>
                 </>
@@ -544,16 +572,31 @@ function RunModal({
               />
               {customers.length > 0 && (
                 <div style={{ marginTop: "auto", paddingTop: 16 }}>
-                  <button
-                    onClick={handleGenerate}
-                    disabled={isGenerating}
-                    className="btn btn-primary"
-                    style={{ width: "100%", justifyContent: "center" }}
-                  >
-                    {isGenerating
+                  {(() => {
+                    const activeCount = customers.filter((c) => !ignoredCustomers.has(c.id)).length;
+                    const emailCount = Object.entries(customerChannels).filter(
+                      ([id, ch]) => !ignoredCustomers.has(Number(id)) && ch === "email"
+                    ).length;
+                    const textCount = Object.entries(customerChannels).filter(
+                      ([id, ch]) => !ignoredCustomers.has(Number(id)) && ch === "text"
+                    ).length;
+                    const base = `Generate ${activeCount} Draft${activeCount !== 1 ? "s" : ""}`;
+                    const label = isGenerating
                       ? "Generating…"
-                      : `Generate ${customers.length} Draft${customers.length !== 1 ? "s" : ""}`}
-                  </button>
+                      : emailCount > 0 && textCount > 0
+                      ? `${base} (${emailCount} email, ${textCount} text)`
+                      : base;
+                    return (
+                      <button
+                        onClick={handleGenerate}
+                        disabled={isGenerating || activeCount === 0}
+                        className="btn btn-primary"
+                        style={{ width: "100%", justifyContent: "center" }}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -566,7 +609,19 @@ function RunModal({
 
 // ─── Matched customer row ─────────────────────────────────────────────────────
 
-function MatchedCustomerRow({ customer }: { customer: MatchedCustomer }) {
+function MatchedCustomerRow({
+  customer,
+  channel,
+  ignored,
+  onChannelChange,
+  onIgnore,
+}: {
+  customer: MatchedCustomer;
+  channel: "email" | "text";
+  ignored: boolean;
+  onChannelChange: (id: number, ch: "email" | "text") => void;
+  onIgnore: (id: number) => void;
+}) {
   const primaryCar = customer.cars[0] ?? null;
   const carLabel = primaryCar
     ? [primaryCar.year, primaryCar.make, primaryCar.model].filter(Boolean).join(" ")
@@ -579,21 +634,75 @@ function MatchedCustomerRow({ customer }: { customer: MatchedCustomer }) {
       : (primaryCar?.ownership_type ?? null);
 
   return (
-    <div className="card" style={{ padding: "10px 12px" }}>
-      <div style={{ fontWeight: 600, fontSize: 13, color: "var(--color-text)" }}>{customer.full_name}</div>
-      {carLabel && (
-        <div style={{ fontSize: 12, color: "var(--color-text-3)", marginTop: 2 }}>
-          {carLabel}
-          {ownershipLabel ? ` · ${ownershipLabel}` : ""}
+    <div className="card" style={{ padding: "10px 12px", opacity: ignored ? 0.45 : 1, transition: "opacity 0.15s" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ minWidth: 0, textDecoration: ignored ? "line-through" : "none" }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: "var(--color-text)" }}>{customer.full_name}</div>
+          {carLabel && (
+            <div style={{ fontSize: 12, color: "var(--color-text-3)", marginTop: 2 }}>
+              {carLabel}
+              {ownershipLabel ? ` · ${ownershipLabel}` : ""}
+            </div>
+          )}
+          {customer.last_contacted_at ? (
+            <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>
+              Last contact: {new Date(customer.last_contacted_at).toLocaleDateString()}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>Never contacted</div>
+          )}
+          {customer.email && (
+            <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>
+              {customer.email}
+            </div>
+          )}
+          {customer.phone && (
+            <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>
+              {customer.phone}
+            </div>
+          )}
         </div>
-      )}
-      {customer.last_contacted_at ? (
-        <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>
-          Last contact: {new Date(customer.last_contacted_at).toLocaleDateString()}
+        <div style={{ display: "flex", gap: 4, flexShrink: 0, marginTop: 1, alignItems: "center" }}>
+          {!ignored && (["email", "text"] as const).map((ch) => (
+            <button
+              key={ch}
+              onClick={() => onChannelChange(customer.id, ch)}
+              style={{
+                padding: "2px 8px",
+                fontSize: 11,
+                fontWeight: 600,
+                borderRadius: 12,
+                border: "1px solid",
+                cursor: "pointer",
+                borderColor: channel === ch ? "var(--color-primary)" : "var(--color-border)",
+                background: channel === ch ? "var(--color-primary)" : "transparent",
+                color: channel === ch ? "#fff" : "var(--color-text-3)",
+                transition: "all 0.12s",
+              }}
+            >
+              {ch === "email" ? "Email" : "Text"}
+            </button>
+          ))}
+          <button
+            onClick={() => onIgnore(customer.id)}
+            title={ignored ? "Restore" : "Ignore"}
+            style={{
+              padding: "2px 7px",
+              fontSize: ignored ? 11 : 13,
+              fontWeight: ignored ? 600 : 400,
+              borderRadius: ignored ? 12 : 4,
+              border: "1px solid var(--color-border-2)",
+              cursor: "pointer",
+              background: "none",
+              color: "var(--color-text-4)",
+              lineHeight: 1,
+              transition: "all 0.12s",
+            }}
+          >
+            {ignored ? "Undo" : "×"}
+          </button>
         </div>
-      ) : (
-        <div style={{ fontSize: 11, color: "var(--color-text-4)", marginTop: 2 }}>Never contacted</div>
-      )}
+      </div>
     </div>
   );
 }

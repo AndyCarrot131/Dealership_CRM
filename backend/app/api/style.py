@@ -1,4 +1,5 @@
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -9,16 +10,18 @@ from app.agents.style_summarizer import run_style_summarizer
 from app.auth.dependencies import get_current_user
 from app.db import get_db
 from app.llm.client import LLMClient, get_llm_client
-from app.models.style import SampleMessage, StyleCategory, StyleProfile
+from app.models.style import SampleMessage, StyleCategory, StyleExtraRule, StyleProfile
 from app.models.user import User
 
 router = APIRouter(tags=["style"])
 
 VALID_CHANNELS = frozenset({"email", "text"})
+VALID_RULE_CHANNELS = frozenset({"email", "text", "both"})
 
 
 class SampleCreate(BaseModel):
     channel: str
+    subject: str = ""
     raw_content: str
     label: str = ""
 
@@ -26,6 +29,7 @@ class SampleCreate(BaseModel):
 class SampleOut(BaseModel):
     id: int
     channel: str
+    subject: Optional[str]
     raw_content: str
     label: str
 
@@ -48,6 +52,34 @@ class CategoryOut(BaseModel):
     id: int
     channel: str
     name: str
+
+    model_config = {"from_attributes": True}
+
+
+class StyleProfilePatch(BaseModel):
+    style_md: str
+
+
+class StyleRuleCreate(BaseModel):
+    channel: str
+    category: str = ""
+    rule_text: str
+
+
+class StyleRuleUpdate(BaseModel):
+    channel: Optional[str] = None
+    category: Optional[str] = None
+    rule_text: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class StyleRuleOut(BaseModel):
+    id: int
+    channel: str
+    category: str
+    rule_text: str
+    active: bool
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -82,9 +114,11 @@ async def create_sample(
     db: AsyncSession = Depends(get_db),
 ) -> SampleMessage:
     _check_channel(body.channel)
+    subject = body.subject.strip() or None
     sample = SampleMessage(
         sales_id=current_user.id,
         channel=body.channel,
+        subject=subject,
         raw_content=body.raw_content.strip(),
         label=body.label.strip(),
     )
@@ -275,8 +309,13 @@ async def summarize(
     category_names = [c.name for c in categories_result.scalars().all()]
 
     try:
+        def _sample_content(s: SampleMessage) -> str:
+            if s.subject:
+                return f"Subject: {s.subject}\n\n{s.raw_content}"
+            return s.raw_content
+
         style_md = await run_style_summarizer(
-            [(s.label, s.raw_content) for s in samples],
+            [(s.label, _sample_content(s)) for s in samples],
             channel,
             llm,
             categories=category_names if category_names else None,
@@ -302,3 +341,141 @@ async def summarize(
     await db.commit()
     await db.refresh(profile)
     return profile
+
+
+@router.patch("/profile/{channel}", response_model=StyleProfileOut)
+async def update_profile(
+    channel: str,
+    body: StyleProfilePatch,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    _check_channel(channel)
+    existing = await db.execute(
+        select(StyleProfile).where(
+            StyleProfile.sales_id == current_user.id,
+            StyleProfile.channel == channel,
+        )
+    )
+    profile = existing.scalar_one_or_none()
+    if profile:
+        profile.style_md = body.style_md
+    else:
+        profile = StyleProfile(sales_id=current_user.id, channel=channel, style_md=body.style_md)
+        db.add(profile)
+    await db.commit()
+    await db.refresh(profile)
+    return profile
+
+
+# ─── Extra Rules ──────────────────────────────────────────────────────────────
+
+
+@router.get("/rules", response_model=list[StyleRuleOut])
+async def list_rules(
+    channel: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    q = select(StyleExtraRule).where(StyleExtraRule.sales_id == current_user.id)
+    if channel is not None:
+        if channel not in VALID_RULE_CHANNELS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"channel must be one of: {', '.join(sorted(VALID_RULE_CHANNELS))}",
+            )
+        q = q.where(StyleExtraRule.channel == channel)
+    q = q.order_by(StyleExtraRule.category.nulls_last(), StyleExtraRule.created_at)
+    result = await db.execute(q)
+    rows = result.scalars().all()
+    return [_rule_to_out(r) for r in rows]
+
+
+@router.post("/rules", response_model=StyleRuleOut, status_code=status.HTTP_201_CREATED)
+async def create_rule(
+    body: StyleRuleCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    if body.channel not in VALID_RULE_CHANNELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"channel must be one of: {', '.join(sorted(VALID_RULE_CHANNELS))}",
+        )
+    rule_text = body.rule_text.strip()
+    if not rule_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="rule_text cannot be empty.",
+        )
+    rule = StyleExtraRule(
+        sales_id=current_user.id,
+        channel=body.channel,
+        category=body.category.strip() or None,
+        rule_text=rule_text,
+    )
+    db.add(rule)
+    await db.commit()
+    await db.refresh(rule)
+    return _rule_to_out(rule)
+
+
+@router.patch("/rules/{rule_id}", response_model=StyleRuleOut)
+async def update_rule(
+    rule_id: int,
+    body: StyleRuleUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Any:
+    rule = await _fetch_rule(rule_id, current_user, db)
+    if body.channel is not None:
+        if body.channel not in VALID_RULE_CHANNELS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"channel must be one of: {', '.join(sorted(VALID_RULE_CHANNELS))}",
+            )
+        rule.channel = body.channel
+    if body.category is not None:
+        rule.category = body.category.strip() or None
+    if body.rule_text is not None:
+        rule.rule_text = body.rule_text.strip()
+    if body.active is not None:
+        rule.active = body.active
+    await db.commit()
+    await db.refresh(rule)
+    return _rule_to_out(rule)
+
+
+@router.delete("/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_rule(
+    rule_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    rule = await _fetch_rule(rule_id, current_user, db)
+    await db.delete(rule)
+    await db.commit()
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+
+async def _fetch_rule(rule_id: int, current_user: User, db: AsyncSession) -> StyleExtraRule:
+    result = await db.execute(select(StyleExtraRule).where(StyleExtraRule.id == rule_id))
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    if rule.sales_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return rule
+
+
+def _rule_to_out(rule: StyleExtraRule) -> dict:
+    return {
+        "id": rule.id,
+        "channel": rule.channel,
+        "category": rule.category or "",
+        "rule_text": rule.rule_text,
+        "active": rule.active,
+        "created_at": rule.created_at,
+    }

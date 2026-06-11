@@ -10,7 +10,7 @@ that faithfully match this person's voice and style.
 
 {category_instruction}
 
-Each category section MUST contain exactly two sub-sections:
+Each category section MUST contain exactly {subsection_count} sub-sections:{subject_line_section}
 
 ### Format
 Describe the structural/layout conventions observed in the samples:
@@ -31,6 +31,18 @@ Describe the voice and language patterns:
 - Anything that makes this person's writing instantly recognisable
 
 Output a clean markdown document. Do NOT include any samples verbatim."""
+
+_SUBJECT_LINE_SECTION = """
+
+### Subject Line
+Describe the subject line patterns observed across the samples:
+- Typical length (e.g. under 6 words, one short phrase)
+- Tone and urgency (e.g. friendly teaser, direct offer, question)
+- Use of personalisation (customer name, vehicle details)
+- Common openers or formulas (e.g. "Your [Year] [Model] is ready", "Quick update on…")
+- Capitalisation style (title case, sentence case, all-lower)
+- Use of numbers, emojis, or special characters
+- Anything that makes the subject line pattern recognisable"""
 
 _CATEGORY_INSTRUCTION_DEFAULT = """The samples are grouped by condition (e.g. "Leasing Ending", "Test Drive"). Produce a ## section
 for each condition. If there is a "General" group, produce it first as "## General"."""
@@ -74,7 +86,18 @@ async def run_style_summarizer(
         ordered_keys = list(groups.keys())
         category_instruction = _CATEGORY_INSTRUCTION_DEFAULT
 
-    system_prompt = _SYSTEM_BASE.format(category_instruction=category_instruction)
+    if channel == "email":
+        subsection_count = "three"
+        subject_line_section = _SUBJECT_LINE_SECTION
+    else:
+        subsection_count = "two"
+        subject_line_section = ""
+
+    system_prompt = _SYSTEM_BASE.format(
+        category_instruction=category_instruction,
+        subsection_count=subsection_count,
+        subject_line_section=subject_line_section,
+    )
 
     sections: list[str] = []
     for key in ordered_keys:

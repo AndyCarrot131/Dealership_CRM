@@ -36,6 +36,7 @@ class EmailDraft(Base):
     rule_id: Mapped[Optional[int]] = mapped_column(ForeignKey("outreach_rules.id", ondelete="SET NULL"))
     subject: Mapped[str] = mapped_column(String(300), nullable=False)
     body: Mapped[str] = mapped_column(nullable=False)
+    channel: Mapped[str] = mapped_column(String(10), nullable=False, default="email")  # "email" | "text"
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # "pending" | "approved" | "dismissed"
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     approved_at: Mapped[Optional[datetime]] = mapped_column()

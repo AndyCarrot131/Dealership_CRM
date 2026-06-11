@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, List
-from sqlalchemy import ForeignKey, String, func, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -15,7 +15,7 @@ class Customer(Base):
     email: Mapped[Optional[str]] = mapped_column(String(254))
     phone: Mapped[Optional[str]] = mapped_column(String(30))
     note: Mapped[Optional[str]] = mapped_column(String(2000))
-    last_contacted_at: Mapped[Optional[datetime]] = mapped_column()
+    last_contacted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now(), onupdate=func.now())
 

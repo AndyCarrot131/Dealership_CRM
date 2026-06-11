@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { AGENTS, AgentKey } from "./AgentPanels";
 
 interface CustomerCar {
   id: number;
@@ -50,6 +51,13 @@ interface PendingDiff {
   car_lease_end_date?: string;
 }
 
+interface PendingDraft {
+  customer_id: number;
+  customer_name: string;
+  subject: string;
+  body: string;
+}
+
 interface AgentChatProps {
   mode?: "sidebar" | "page";
   chatMode?: "intake" | "update" | "assistant";
@@ -58,6 +66,8 @@ interface AgentChatProps {
   onClose?: () => void;
   onCustomerCreated?: (customer: Customer) => void;
   onCustomerUpdated?: (customer: Customer) => void;
+  onSwitchAgent?: (key: AgentKey) => void;
+  currentAgent?: AgentKey;
 }
 
 const OWNERSHIP_LABELS: Record<string, string> = {
@@ -249,6 +259,88 @@ function ConfirmButtons({
   );
 }
 
+function DraftPreview({
+  draft,
+  onSave,
+  onCancel,
+  loading,
+}: {
+  draft: PendingDraft;
+  onSave: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div
+      style={{
+        margin: "8px 12px",
+        padding: "10px 14px",
+        background: "#eff6ff",
+        border: "1px solid #93c5fd",
+        borderRadius: 8,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 6, color: "#1e40af" }}>
+        Draft for {draft.customer_name}:
+      </div>
+      <div style={{ color: "#374151", lineHeight: 1.6 }}>
+        <div style={{ fontWeight: 500, marginBottom: 6 }}>
+          Subject: {draft.subject}
+        </div>
+        <div
+          style={{
+            whiteSpace: "pre-wrap",
+            maxHeight: 200,
+            overflowY: "auto",
+            background: "#fff",
+            border: "1px solid #e5e7eb",
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 12,
+          }}
+        >
+          {draft.body}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+        <button
+          onClick={onSave}
+          disabled={loading}
+          style={{
+            flex: 1,
+            padding: "6px 0",
+            background: loading ? "#93c5fd" : "#2563eb",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            cursor: loading ? "default" : "pointer",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          {loading ? "Saving…" : "Save to Inbox"}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={loading}
+          style={{
+            flex: 1,
+            padding: "6px 0",
+            background: "none",
+            border: "1px solid #ccc",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 13,
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentChat({
   mode = "sidebar",
   chatMode = "intake",
@@ -257,12 +349,14 @@ export default function AgentChat({
   onClose,
   onCustomerCreated,
   onCustomerUpdated,
+  onSwitchAgent,
+  currentAgent,
 }: AgentChatProps) {
   const isUpdate = chatMode === "update";
   const isAssistant = chatMode === "assistant";
 
   const initialMessage = isAssistant
-    ? 'Hi! Ask me anything about your CRM data.\n\nExamples:\n• "How many customers haven\'t been contacted in 60 days?"\n• "Which leases end in the next 3 months?"\n• "What Toyotas do we have in stock under $30k?"'
+    ? 'Hi! Ask me anything about your CRM data — or ask me to write an email.\n\nExamples:\n• "How many customers haven\'t been contacted in 60 days?"\n• "Which leases end in the next 3 months?"\n• "What Toyotas do we have in stock under $30k?"\n• "Write an email to Sunny Cook reminding her about her lease"'
     : isUpdate
     ? `I'm ready to update ${customerName ?? "this customer"}. Describe what changed.`
     : 'Hi! Describe a new customer and I\'ll add them for you.\n\nExample: "Add Sarah Lee, 604-555-0199, she owns a 2021 Honda Civic"';
@@ -275,11 +369,12 @@ export default function AgentChat({
   const [confirming, setConfirming] = useState(false);
   const [pendingIntake, setPendingIntake] = useState<PendingIntake | null>(null);
   const [pendingDiff, setPendingDiff] = useState<PendingDiff | null>(null);
+  const [pendingDraft, setPendingDraft] = useState<PendingDraft | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pendingIntake, pendingDiff]);
+  }, [messages, pendingIntake, pendingDiff, pendingDraft]);
 
   async function handleSend() {
     const text = input.trim();
@@ -292,6 +387,7 @@ export default function AgentChat({
     setLoading(true);
     setPendingIntake(null);
     setPendingDiff(null);
+    setPendingDraft(null);
 
     try {
       const apiHistory = nextMessages.slice(0, -1).map((m) => ({
@@ -302,6 +398,7 @@ export default function AgentChat({
         reply: string;
         intent: string;
         pending_fields: Record<string, unknown> | null;
+        pending_draft: PendingDraft | null;
       }>("/chat", {
         message: text,
         history: apiHistory,
@@ -315,6 +412,8 @@ export default function AgentChat({
         setPendingIntake(res.pending_fields as unknown as PendingIntake);
       } else if (res.intent === "update_customer" && res.pending_fields) {
         setPendingDiff(res.pending_fields as PendingDiff);
+      } else if (res.intent === "compose_draft" && res.pending_draft) {
+        setPendingDraft(res.pending_draft);
       }
     } catch (e) {
       setMessages([
@@ -384,9 +483,41 @@ export default function AgentChat({
     }
   }
 
+  async function handleSaveDraft() {
+    if (!pendingDraft || confirming) return;
+    setConfirming(true);
+    const draft = pendingDraft;
+    try {
+      await api.post("/outreach/drafts", {
+        customer_id: draft.customer_id,
+        subject: draft.subject,
+        body: draft.body,
+      });
+      setPendingDraft(null);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Done! The draft for ${draft.customer_name} has been saved to your Inbox.`,
+        },
+      ]);
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: e instanceof Error ? e.message : "Failed to save draft. Try again.",
+        },
+      ]);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   function handleCancel() {
     setPendingIntake(null);
     setPendingDiff(null);
+    setPendingDraft(null);
     setMessages((prev) => [
       ...prev,
       { role: "assistant", content: "Cancelled. What else can I help with?" },
@@ -468,6 +599,47 @@ export default function AgentChat({
         )}
       </div>
 
+      {onSwitchAgent && (
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            padding: "6px 12px",
+            overflowX: "auto",
+            background: "#fff",
+            borderBottom: "1px solid #e5e7eb",
+            flexShrink: 0,
+          }}
+        >
+          {AGENTS.map((a) => {
+            const active = currentAgent === a.key;
+            return (
+              <button
+                key={a.key}
+                onClick={() => onSwitchAgent(a.key)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  whiteSpace: "nowrap",
+                  background: active ? "#2563eb" : "#f3f4f6",
+                  color: active ? "#fff" : "#374151",
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                <span>{a.icon}</span>
+                <span>{a.title}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ flex: 1, overflowY: "auto", padding: "12px 0" }}>
         {messages.map((msg, i) => (
           <div
@@ -529,6 +701,15 @@ export default function AgentChat({
           <DiffConfirm
             diff={pendingDiff}
             onConfirm={handleConfirmUpdate}
+            onCancel={handleCancel}
+            loading={confirming}
+          />
+        )}
+
+        {pendingDraft && !loading && (
+          <DraftPreview
+            draft={pendingDraft}
+            onSave={handleSaveDraft}
             onCancel={handleCancel}
             loading={confirming}
           />

@@ -10,7 +10,12 @@
       "Bash(docker-compose ps *)",
       "Bash(docker-compose logs *)",
       "Bash(docker-compose up *)",
-      "Bash(docker-compose exec *)"
+      "Bash(docker-compose exec *)",
+      "Bash(docker exec *)",
+      "Bash(npm run *)",
+      "Bash(npx tsc *)",
+      "Bash(python -c ' *)",
+      "Bash(git checkout *)"
     ],
     "additionalDirectories": [
       "d:\\Github_My_repo\\OreganSales_CRM\\.claude"

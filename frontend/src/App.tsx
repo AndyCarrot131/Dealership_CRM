@@ -26,7 +26,7 @@ function ProtectedLayout() {
   const { token, mustChangePassword } = useAuth();
   const location = useLocation();
   const [showChat, setShowChat] = useState(false);
-  const [sidebarAgent, setSidebarAgent] = useState<AgentKey | null>(null);
+  const [sidebarAgent, setSidebarAgent] = useState<AgentKey | null>("assistant");
   const [sidebarCustomer, setSidebarCustomer] = useState<SimpleCustomer | null>(null);
 
   if (!token) return <Navigate to="/login" replace />;
@@ -35,13 +35,13 @@ function ProtectedLayout() {
   const onSettingsPage = location.pathname === "/settings";
 
   function handleSidebarBack() {
-    setSidebarAgent(null);
+    setSidebarAgent("assistant");
     setSidebarCustomer(null);
   }
 
   function handleSidebarClose() {
     setShowChat(false);
-    setSidebarAgent(null);
+    setSidebarAgent("assistant");
     setSidebarCustomer(null);
   }
 
@@ -81,11 +81,23 @@ function ProtectedLayout() {
           )}
 
           {sidebarAgent === "assistant" && (
-            <AgentChat mode="page" chatMode="assistant" onClose={handleSidebarBack} />
+            <AgentChat
+              mode="page"
+              chatMode="assistant"
+              onClose={handleSidebarBack}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="assistant"
+            />
           )}
 
           {sidebarAgent === "intake" && (
-            <AgentChat mode="page" chatMode="intake" onClose={handleSidebarBack} />
+            <AgentChat
+              mode="page"
+              chatMode="intake"
+              onClose={handleSidebarBack}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="intake"
+            />
           )}
 
           {sidebarAgent === "update" && !sidebarCustomer && (
@@ -103,6 +115,8 @@ function ProtectedLayout() {
               customerId={sidebarCustomer.id}
               customerName={sidebarCustomer.full_name}
               onClose={handleSidebarBack}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="update"
             />
           )}
 

@@ -17,7 +17,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _SEED_EMAIL = "admin@dealer.local"
 _SEED_NAME = "Admin"
-_SEED_INITIAL_PASSWORD = "changeme"
+_SEED_INITIAL_PASSWORD = "changeme2"
 
 
 def upgrade() -> None:

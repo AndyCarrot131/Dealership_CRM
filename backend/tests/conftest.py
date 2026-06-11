@@ -26,6 +26,7 @@ from app.models import (  # noqa: F401 — register all tables on Base.metadata
     customer,
     interaction,
     inventory,
+    llm_log,
     outreach,
     style,
     user,

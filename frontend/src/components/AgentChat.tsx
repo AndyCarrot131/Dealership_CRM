@@ -52,7 +52,7 @@ interface PendingDiff {
 
 interface AgentChatProps {
   mode?: "sidebar" | "page";
-  chatMode?: "intake" | "update";
+  chatMode?: "intake" | "update" | "assistant";
   customerId?: number;
   customerName?: string;
   onClose?: () => void;
@@ -259,8 +259,11 @@ export default function AgentChat({
   onCustomerUpdated,
 }: AgentChatProps) {
   const isUpdate = chatMode === "update";
+  const isAssistant = chatMode === "assistant";
 
-  const initialMessage = isUpdate
+  const initialMessage = isAssistant
+    ? 'Hi! Ask me anything about your CRM data.\n\nExamples:\n• "How many customers haven\'t been contacted in 60 days?"\n• "Which leases end in the next 3 months?"\n• "What Toyotas do we have in stock under $30k?"'
+    : isUpdate
     ? `I'm ready to update ${customerName ?? "this customer"}. Describe what changed.`
     : 'Hi! Describe a new customer and I\'ll add them for you.\n\nExample: "Add Sarah Lee, 604-555-0199, she owns a 2021 Honda Civic"';
 
@@ -417,11 +420,17 @@ export default function AgentChat({
           height: "100%",
         };
 
-  const headerLabel = isUpdate
+  const headerLabel = isAssistant
+    ? "💬 Ask Anything"
+    : isUpdate
     ? `✦ Update${customerName ? `: ${customerName}` : ""}`
     : "✦ AI Assistant";
 
-  const placeholder = isUpdate ? "Describe what changed…" : "Describe a customer…";
+  const placeholder = isAssistant
+    ? "Ask about your customers, inventory, outreach…"
+    : isUpdate
+    ? "Describe what changed…"
+    : "Describe a customer…";
 
   return (
     <div style={wrapperStyle}>

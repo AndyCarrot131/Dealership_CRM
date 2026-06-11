@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.assistant import run_assistant
 from app.agents.intake import run_intake
 from app.agents.update import run_update
 from app.auth.dependencies import get_current_user
@@ -116,7 +117,10 @@ async def chat(
     history.append({"role": "user", "content": body.message})
 
     try:
-        if body.mode == "update":
+        if body.mode == "assistant":
+            reply = await run_assistant(history, current_user, db, llm)
+            return ChatResponse(reply=reply, intent="assistant", pending_fields=None)
+        elif body.mode == "update":
             if body.customer_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

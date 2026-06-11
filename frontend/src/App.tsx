@@ -80,6 +80,10 @@ function ProtectedLayout() {
             </>
           )}
 
+          {sidebarAgent === "assistant" && (
+            <AgentChat mode="page" chatMode="assistant" onClose={handleSidebarBack} />
+          )}
+
           {sidebarAgent === "intake" && (
             <AgentChat mode="page" chatMode="intake" onClose={handleSidebarBack} />
           )}

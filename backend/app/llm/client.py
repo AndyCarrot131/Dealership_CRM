@@ -2,17 +2,23 @@ from typing import Any
 
 import httpx
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.dependencies import get_current_user
-from app.db import get_db
+from app.db import AsyncSessionLocal, get_db
 from app.models.user import User
 from app.services.llm_config import LLMRuntimeConfig, resolve_llm_config
+from app.services.llm_log import record_llm_request
 
 
 class LLMClient:
-    def __init__(self, config: LLMRuntimeConfig):
+    def __init__(
+        self,
+        config: LLMRuntimeConfig,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+    ):
         self._config = config
+        self._session_factory = session_factory or AsyncSessionLocal
 
     async def chat(
         self,
@@ -21,6 +27,7 @@ class LLMClient:
         tool_choice: str = "auto",
     ) -> dict[str, Any]:
         cfg = self._config
+        url = f"{cfg.base_url.rstrip('/')}/chat/completions"
         payload: dict[str, Any] = {"model": cfg.model, "messages": messages}
         if tools:
             payload["tools"] = tools
@@ -28,7 +35,7 @@ class LLMClient:
 
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"{cfg.base_url.rstrip('/')}/chat/completions",
+                url,
                 json=payload,
                 headers={
                     "Authorization": f"Bearer {cfg.api_key}",
@@ -36,7 +43,16 @@ class LLMClient:
                 },
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+
+        await record_llm_request(
+            self._session_factory,
+            url=url,
+            model=cfg.model,
+            request_payload=payload,
+            response_payload=data,
+        )
+        return data
 
 
 async def get_llm_client(

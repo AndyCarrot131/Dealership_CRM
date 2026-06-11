@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 
-export type AgentKey = "intake" | "update" | "style" | "rule" | "email";
+export type AgentKey = "assistant" | "intake" | "update" | "style" | "rule" | "email";
 
 export interface SimpleCustomer {
   id: number;
@@ -26,6 +26,7 @@ interface RunResult {
 }
 
 export const AGENTS: { key: AgentKey; icon: string; title: string; desc: string }[] = [
+  { key: "assistant", icon: "💬", title: "Ask Anything", desc: "Ask questions about your customers, cars, inventory and outreach — I'll look it up." },
   { key: "intake", icon: "＋", title: "Add Customer",  desc: "Describe a new customer in plain English and I'll create the record." },
   { key: "update", icon: "✎",  title: "Edit Customer", desc: "Find a customer and tell me what changed — I'll update the record." },
   { key: "style",  icon: "✦",  title: "Analyze Style", desc: "Regenerate your writing style guide from saved sample messages." },

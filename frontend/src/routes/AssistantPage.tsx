@@ -68,6 +68,14 @@ export default function AssistantPage() {
     );
   }
 
+  if (selectedAgent === "assistant") {
+    return (
+      <PageShell>
+        <AgentChat mode="page" chatMode="assistant" onClose={handleBack} />
+      </PageShell>
+    );
+  }
+
   if (selectedAgent === "intake") {
     return (
       <PageShell>

@@ -58,6 +58,14 @@ interface PendingDraft {
   body: string;
 }
 
+interface PendingLog {
+  customer_id: number;
+  customer_name: string;
+  channel: string;
+  summary: string;
+  contacted_at: string | null;
+}
+
 interface AgentChatProps {
   mode?: "sidebar" | "page";
   chatMode?: "intake" | "update" | "assistant";
@@ -341,6 +349,106 @@ function DraftPreview({
   );
 }
 
+const CHANNEL_LABELS: Record<string, string> = {
+  call: "Call",
+  text: "Text",
+  email: "Email",
+  "in-person": "In-Person",
+};
+
+function LogPreview({
+  log,
+  onSave,
+  onCancel,
+  loading,
+}: {
+  log: PendingLog;
+  onSave: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  const dateStr = log.contacted_at
+    ? new Date(log.contacted_at).toLocaleDateString()
+    : "Today";
+  return (
+    <div
+      style={{
+        margin: "8px 12px",
+        padding: "10px 14px",
+        background: "#fdf4ff",
+        border: "1px solid #d8b4fe",
+        borderRadius: 8,
+        fontSize: 13,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 6, color: "#6b21a8" }}>
+        Contact log for {log.customer_name}:
+      </div>
+      <div style={{ color: "#374151", lineHeight: 1.6 }}>
+        <div>
+          <span style={{ color: "#555" }}>Channel:</span>{" "}
+          <strong>{CHANNEL_LABELS[log.channel] ?? log.channel}</strong>
+        </div>
+        <div>
+          <span style={{ color: "#555" }}>Date:</span> <strong>{dateStr}</strong>
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <span style={{ color: "#555" }}>Summary:</span>
+          <div
+            style={{
+              marginTop: 4,
+              whiteSpace: "pre-wrap",
+              maxHeight: 140,
+              overflowY: "auto",
+              background: "#fff",
+              border: "1px solid #e5e7eb",
+              borderRadius: 6,
+              padding: "6px 10px",
+              fontSize: 12,
+            }}
+          >
+            {log.summary}
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+        <button
+          onClick={onSave}
+          disabled={loading}
+          style={{
+            flex: 1,
+            padding: "6px 0",
+            background: loading ? "#d8b4fe" : "#7c3aed",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            cursor: loading ? "default" : "pointer",
+            fontSize: 13,
+            fontWeight: 500,
+          }}
+        >
+          {loading ? "Saving…" : "Save to Contact Log"}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={loading}
+          style={{
+            flex: 1,
+            padding: "6px 0",
+            background: "none",
+            border: "1px solid #ccc",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 13,
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AgentChat({
   mode = "sidebar",
   chatMode = "intake",
@@ -356,7 +464,7 @@ export default function AgentChat({
   const isAssistant = chatMode === "assistant";
 
   const initialMessage = isAssistant
-    ? 'Hi! Ask me anything about your CRM data — or ask me to write an email.\n\nExamples:\n• "How many customers haven\'t been contacted in 60 days?"\n• "Which leases end in the next 3 months?"\n• "What Toyotas do we have in stock under $30k?"\n• "Write an email to Sunny Cook reminding her about her lease"'
+    ? 'Hi! Ask me anything about your CRM data — or ask me to write an email or log a conversation.\n\nExamples:\n• "How many customers haven\'t been contacted in 60 days?"\n• "Which leases end in the next 3 months?"\n• "What Toyotas do we have in stock under $30k?"\n• "Write an email to Sunny Cook reminding her about her lease"\n• "Log this for Sarah Jones: [paste email thread]"'
     : isUpdate
     ? `I'm ready to update ${customerName ?? "this customer"}. Describe what changed.`
     : 'Hi! Describe a new customer and I\'ll add them for you.\n\nExample: "Add Sarah Lee, 604-555-0199, she owns a 2021 Honda Civic"';
@@ -370,11 +478,12 @@ export default function AgentChat({
   const [pendingIntake, setPendingIntake] = useState<PendingIntake | null>(null);
   const [pendingDiff, setPendingDiff] = useState<PendingDiff | null>(null);
   const [pendingDraft, setPendingDraft] = useState<PendingDraft | null>(null);
+  const [pendingLog, setPendingLog] = useState<PendingLog | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, pendingIntake, pendingDiff, pendingDraft]);
+  }, [messages, pendingIntake, pendingDiff, pendingDraft, pendingLog]);
 
   async function handleSend() {
     const text = input.trim();
@@ -388,6 +497,7 @@ export default function AgentChat({
     setPendingIntake(null);
     setPendingDiff(null);
     setPendingDraft(null);
+    setPendingLog(null);
 
     try {
       const apiHistory = nextMessages.slice(0, -1).map((m) => ({
@@ -399,6 +509,7 @@ export default function AgentChat({
         intent: string;
         pending_fields: Record<string, unknown> | null;
         pending_draft: PendingDraft | null;
+        pending_log: PendingLog | null;
       }>("/chat", {
         message: text,
         history: apiHistory,
@@ -414,6 +525,8 @@ export default function AgentChat({
         setPendingDiff(res.pending_fields as PendingDiff);
       } else if (res.intent === "compose_draft" && res.pending_draft) {
         setPendingDraft(res.pending_draft);
+      } else if (res.intent === "log_contact" && res.pending_log) {
+        setPendingLog(res.pending_log);
       }
     } catch (e) {
       setMessages([
@@ -514,10 +627,43 @@ export default function AgentChat({
     }
   }
 
+  async function handleSaveLog() {
+    if (!pendingLog || confirming) return;
+    setConfirming(true);
+    const log = pendingLog;
+    try {
+      await api.post("/interactions", {
+        customer_id: log.customer_id,
+        channel: log.channel,
+        summary: log.summary,
+        contacted_at: log.contacted_at ?? undefined,
+      });
+      setPendingLog(null);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Done! The contact log for ${log.customer_name} has been saved.`,
+        },
+      ]);
+    } catch (e) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: e instanceof Error ? e.message : "Failed to save contact log. Try again.",
+        },
+      ]);
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   function handleCancel() {
     setPendingIntake(null);
     setPendingDiff(null);
     setPendingDraft(null);
+    setPendingLog(null);
     setMessages((prev) => [
       ...prev,
       { role: "assistant", content: "Cancelled. What else can I help with?" },
@@ -710,6 +856,15 @@ export default function AgentChat({
           <DraftPreview
             draft={pendingDraft}
             onSave={handleSaveDraft}
+            onCancel={handleCancel}
+            loading={confirming}
+          />
+        )}
+
+        {pendingLog && !loading && (
+          <LogPreview
+            log={pendingLog}
+            onSave={handleSaveLog}
             onCancel={handleCancel}
             loading={confirming}
           />

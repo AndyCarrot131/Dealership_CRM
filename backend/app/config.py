@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o"
     listen_host: str = "127.0.0.1"
     listen_port: int = 8756
+    uploads_dir: str = "uploads"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

@@ -35,3 +35,43 @@ class LLMConfigUpdate(BaseModel):
     base_url: str
     api_key: str
     model: str
+
+
+class LLMProfileOut(BaseModel):
+    id: int
+    name: str
+    base_url: str
+    api_key_masked: str
+    model: str
+    is_active: bool
+    is_local: bool
+    created_at: datetime
+
+
+class LLMProfileCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    base_url: str
+    api_key: str
+    model: str
+    is_local: bool = False
+
+
+class LLMProfileUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    base_url: str
+    api_key: str  # blank = keep existing
+    model: str
+    is_local: bool = False
+
+
+class LLMTestRequest(BaseModel):
+    base_url: str
+    api_key: str
+    model: str
+    is_local: bool = False
+
+
+class LLMTestResult(BaseModel):
+    ok: bool
+    message: str
+    response_ms: int | None

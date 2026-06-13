@@ -15,7 +15,13 @@
       "Bash(npm run *)",
       "Bash(npx tsc *)",
       "Bash(python -c ' *)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(docker compose *)",
+      "Read(//Users/andychen/.pyenv/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(git stash *)",
+      "Bash(curl -s -o /dev/null -w \"GET /api/deals -> %{http_code}\\\\n\" http://127.0.0.1:8756/api/deals)",
+      "Bash(curl -s -o /dev/null -w \"POST /api/deals/extract -> %{http_code}\\\\n\" -X POST http://127.0.0.1:8756/api/deals/extract)"
     ],
     "additionalDirectories": [
       "d:\\Github_My_repo\\OreganSales_CRM\\.claude"

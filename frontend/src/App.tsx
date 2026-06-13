@@ -15,6 +15,7 @@ import NavBar from "./components/NavBar";
 import LoginPage from "./routes/LoginPage";
 import CustomersPage from "./routes/CustomersPage";
 import ContactsPage from "./routes/ContactsPage";
+import DealsPage from "./routes/DealsPage";
 import AssistantPage from "./routes/AssistantPage";
 import InventoryPage from "./routes/InventoryPage";
 import StylePage from "./routes/StylePage";
@@ -151,6 +152,7 @@ export default function App() {
         <Route element={<ProtectedLayout />}>
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/deals" element={<DealsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/style" element={<StylePage />} />

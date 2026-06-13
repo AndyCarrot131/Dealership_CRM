@@ -12,10 +12,12 @@ You will receive:
 2. Customer profile (name, note, vehicles they own/lease)
 3. Matching inventory vehicles that may be relevant to this customer
 4. The sales representative's writing style guide (in Markdown)
+5. Customer's full contact log (channel, date, summary of each prior interaction)
 
 Rules:
 - Match the representative's voice and style exactly as described in the style guide
 - Make the email feel personal and relevant to this specific customer's situation
+- Use the contact log to avoid repeating topics already covered, acknowledge the relationship naturally, and pick up where the last conversation left off
 - Reference their vehicle(s) naturally (e.g., lease end dates, age, type)
 - Mention 1-2 inventory options at most; do not list every car
 - Follow the word count and paragraph count specified in the style guide; if unspecified, target 180–260 words
@@ -70,12 +72,19 @@ def _build_user_message(
     else:
         purpose = _TYPE_CONTEXT.get(email_type, _TYPE_CONTEXT["lease_finance_ending"])
 
+    contact_lines = []
+    for entry in customer.get("interactions", []):
+        contact_lines.append(
+            f"  • [{entry.get('date', '?')}] {entry.get('channel', '?')}: {entry.get('summary', '')}"
+        )
+
     sections = [
         f"Email purpose: {purpose}",
         f"Customer: {customer['full_name']}",
         f"Note: {customer.get('note') or '(none)'}",
         "Customer vehicles:\n" + ("\n".join(f"  • {l}" for l in car_lines) or "  (none)"),
         "Relevant inventory:\n" + ("\n".join(f"  • {l}" for l in inventory_lines) or "  (none)"),
+        "Contact history (newest first):\n" + ("\n".join(contact_lines) or "  (no prior contact logged)"),
         "Style guide:\n" + (style_md or "(no style guide — write professionally)"),
     ]
     return "\n\n".join(sections)

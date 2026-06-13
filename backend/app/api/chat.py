@@ -38,11 +38,20 @@ class PendingDraft(BaseModel):
     body: str
 
 
+class PendingLog(BaseModel):
+    customer_id: int
+    customer_name: str
+    channel: str
+    summary: str
+    contacted_at: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     reply: str
     intent: str
     pending_fields: Optional[dict[str, Any]] = None
     pending_draft: Optional[PendingDraft] = None
+    pending_log: Optional[PendingLog] = None
 
 
 class ConfirmRequest(BaseModel):
@@ -133,6 +142,11 @@ async def chat(
                 pending_draft=(
                     PendingDraft(**result["pending_draft"])
                     if result.get("pending_draft")
+                    else None
+                ),
+                pending_log=(
+                    PendingLog(**result["pending_log"])
+                    if result.get("pending_log")
                     else None
                 ),
             )

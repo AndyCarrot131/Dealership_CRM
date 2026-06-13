@@ -233,6 +233,18 @@ async def run_rule(
     style_md = await _fetch_style_md(current_user.id, db)
     style_guide_active = bool(style_md)
 
+    customer_ids = [c.id for c in customers]
+    interactions_by_customer: dict[int, list] = {}
+    if customer_ids:
+        inter_result = await db.execute(
+            select(Interaction)
+            .where(Interaction.customer_id.in_(customer_ids))
+            .where(Interaction.sales_id == current_user.id)
+            .order_by(Interaction.contacted_at.desc())
+        )
+        for inter in inter_result.scalars().all():
+            interactions_by_customer.setdefault(inter.customer_id, []).append(inter)
+
     inventory_result = await db.execute(
         select(Inventory).where(Inventory.status == "available").limit(20)
     )
@@ -264,6 +276,14 @@ async def run_rule(
                     "lease_end_date": str(car.lease_end_date) if car.lease_end_date else None,
                 }
                 for car in customer.cars
+            ],
+            "interactions": [
+                {
+                    "channel": i.channel,
+                    "date": i.contacted_at.strftime("%Y-%m-%d"),
+                    "summary": i.summary,
+                }
+                for i in interactions_by_customer.get(customer.id, [])
             ],
         }
         matching_inv = _match_inventory(customer_dict, inventory_dicts)

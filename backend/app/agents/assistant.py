@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.contact_log import run_contact_log_parser
 from app.agents.email_composer import compose_email
 from app.llm.client import LLMClient
 from app.models.customer import Customer
@@ -102,6 +103,33 @@ _COMPOSE_DRAFT_TOOL: dict[str, Any] = {
     },
 }
 
+_LOG_CONTACT_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "log_contact",
+        "description": (
+            "Parse a raw conversation thread (email chain, SMS, call notes) and create a "
+            "contact log entry for a specific customer. Use this when the user pastes a "
+            "conversation and asks to log it, e.g. 'log this for Sarah', 'add this to the "
+            "contact log', 'record this interaction for [name]'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "customer_name": {
+                    "type": "string",
+                    "description": "The customer's name as mentioned by the user.",
+                },
+                "raw_text": {
+                    "type": "string",
+                    "description": "The full raw conversation thread to parse.",
+                },
+            },
+            "required": ["customer_name", "raw_text"],
+        },
+    },
+}
+
 # table -> ownership column that non-managers must filter on
 _OWNERSHIP_COLUMNS = {
     "customers": "assigned_sales_id",
@@ -144,7 +172,8 @@ Rules:
 - When looking for matching inventory, search broadly: by vehicle segment (SUV, sedan, truck, etc.), price range, or a group of similar makes — not only by the exact brand the customer currently drives. A customer with a Hyundai Tucson likely fits any compact/mid-size SUV.
 - For complex questions, run multiple queries in sequence: gather context first, then query the target table with the details you found.
 - When an inventory query returns nothing for a narrow filter, widen the search (drop a constraint, try adjacent segments or a price range) before concluding nothing is available.
-- When the user asks you to write, draft, or compose an email to a customer, call the compose_email_draft tool with the customer's name and the purpose. Do not use query_db for this."""
+- When the user asks you to write, draft, or compose an email to a customer, call the compose_email_draft tool with the customer's name and the purpose. Do not use query_db for this.
+- When the user pastes a conversation thread and asks to log it for a customer, call the log_contact tool with the customer's name and the full raw conversation text. Do not attempt to parse or summarize it yourself — the tool handles that."""
 
 
 async def _execute_tool_call(
@@ -265,6 +294,43 @@ async def _execute_compose_draft(
     }
 
 
+async def _execute_log_contact(
+    customer_name: str,
+    raw_text: str,
+    user: _UserContext,
+    db: AsyncSession,
+    llm: LLMClient,
+) -> dict[str, Any]:
+    q = (
+        select(Customer)
+        .where(Customer.full_name.ilike(f"%{customer_name}%"))
+    )
+    if user.role != "manager":
+        q = q.where(Customer.assigned_sales_id == user.id)
+    result = await db.execute(q)
+    customers = result.scalars().all()
+
+    if len(customers) > 1:
+        names = ", ".join(c.full_name for c in customers[:5])
+        return {"error": f"Multiple customers match '{customer_name}': {names}. Please be more specific."}
+    if not customers:
+        return {"error": f"No customer found matching '{customer_name}'."}
+    customer = customers[0]
+
+    try:
+        parsed = await run_contact_log_parser(raw_text, llm)
+    except Exception as exc:
+        return {"error": f"Failed to parse conversation: {exc}"}
+
+    return {
+        "customer_id": customer.id,
+        "customer_name": customer.full_name,
+        "channel": parsed["channel"],
+        "summary": parsed["summary"],
+        "contacted_at": parsed.get("contacted_at"),
+    }
+
+
 async def run_assistant(
     history: list[dict[str, Any]],
     user: User,
@@ -278,7 +344,7 @@ async def run_assistant(
     ]
 
     for _ in range(MAX_TOOL_STEPS):
-        response = await llm.chat(messages, tools=[_QUERY_TOOL, _COMPOSE_DRAFT_TOOL])
+        response = await llm.chat(messages, tools=[_QUERY_TOOL, _COMPOSE_DRAFT_TOOL, _LOG_CONTACT_TOOL])
         message = response["choices"][0]["message"]
         tool_calls = message.get("tool_calls")
 
@@ -287,6 +353,7 @@ async def run_assistant(
                 "reply": message.get("content") or "I couldn't find an answer to that.",
                 "intent": "assistant",
                 "pending_draft": None,
+                "pending_log": None,
             }
 
         messages.append(message)
@@ -297,7 +364,32 @@ async def run_assistant(
             except (json.JSONDecodeError, TypeError):
                 args = {}
 
-            if fn_name == "compose_email_draft":
+            if fn_name == "log_contact":
+                payload = await _execute_log_contact(
+                    customer_name=str(args.get("customer_name", "")),
+                    raw_text=str(args.get("raw_text", "")),
+                    user=user_ctx,
+                    db=db,
+                    llm=llm,
+                )
+                if "error" not in payload:
+                    return {
+                        "reply": (
+                            f"I've parsed the conversation for {payload['customer_name']}. "
+                            "Review the log entry below and confirm to save it."
+                        ),
+                        "intent": "log_contact",
+                        "pending_draft": None,
+                        "pending_log": payload,
+                    }
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps(payload),
+                    }
+                )
+            elif fn_name == "compose_email_draft":
                 payload = await _execute_compose_draft(
                     customer_name=str(args.get("customer_name", "")),
                     purpose=args.get("purpose"),
@@ -313,6 +405,7 @@ async def run_assistant(
                         ),
                         "intent": "compose_draft",
                         "pending_draft": payload,
+                        "pending_log": None,
                     }
                 # Let the LLM relay the error to the user
                 messages.append(
@@ -343,4 +436,5 @@ async def run_assistant(
         ),
         "intent": "assistant",
         "pending_draft": None,
+        "pending_log": None,
     }

@@ -164,7 +164,10 @@ function CarForm({
               setCarForm({
                 ...carForm,
                 ownership_type: e.target.value,
-                lease_end_date: e.target.value !== "lease" ? "" : carForm.lease_end_date,
+                lease_end_date:
+                  e.target.value === "lease" || e.target.value === "finance"
+                    ? carForm.lease_end_date
+                    : "",
               })
             }
           >
@@ -176,9 +179,11 @@ function CarForm({
         </div>
       </div>
 
-      {carForm.ownership_type === "lease" && (
+      {(carForm.ownership_type === "lease" || carForm.ownership_type === "finance") && (
         <div>
-          <label className="form-label">Lease end date</label>
+          <label className="form-label">
+            {carForm.ownership_type === "finance" ? "Finance end date" : "Lease end date"}
+          </label>
           <input
             className="input"
             style={{ width: "auto" }}

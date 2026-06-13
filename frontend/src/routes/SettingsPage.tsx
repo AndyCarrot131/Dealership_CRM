@@ -13,10 +13,29 @@ interface UserItem {
   created_at: string;
 }
 
-interface LLMConfig {
+interface LLMProfile {
+  id: number;
+  name: string;
   base_url: string;
   api_key_masked: string;
   model: string;
+  is_active: boolean;
+  is_local: boolean;
+  created_at: string;
+}
+
+interface ProfileForm {
+  name: string;
+  base_url: string;
+  api_key: string;
+  model: string;
+  is_local: boolean;
+}
+
+interface TestResult {
+  ok: boolean;
+  message: string;
+  response_ms: number | null;
 }
 
 interface NewUserForm {
@@ -27,6 +46,7 @@ interface NewUserForm {
 }
 
 const EMPTY_NEW_USER: NewUserForm = { email: "", name: "", role: "sales", password: "" };
+const EMPTY_PROFILE_FORM: ProfileForm = { name: "", base_url: "", api_key: "", model: "", is_local: false };
 
 export default function SettingsPage() {
   const { role, mustChangePassword, updateMustChange } = useAuth();
@@ -50,15 +70,30 @@ export default function SettingsPage() {
   const [addUserLoading, setAddUserLoading] = useState(false);
 
   // LLM tab
-  const [llmConfig, setLLMConfig] = useState<LLMConfig | null>(null);
-  const [llmForm, setLLMForm] = useState({ base_url: "", api_key: "", model: "" });
-  const [llmLoading, setLLMLoading] = useState(false);
-  const [llmError, setLLMError] = useState<string | null>(null);
-  const [llmSuccess, setLLMSuccess] = useState(false);
+  const [profiles, setProfiles] = useState<LLMProfile[]>([]);
+  const [profilesLoading, setProfilesLoading] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addForm, setAddForm] = useState<ProfileForm>(EMPTY_PROFILE_FORM);
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addLoading, setAddLoading] = useState(false);
+  const [addTestResult, setAddTestResult] = useState<TestResult | null>(null);
+  const [addTesting, setAddTesting] = useState(false);
+
+  // Per-profile edit state
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<ProfileForm>(EMPTY_PROFILE_FORM);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editTestResult, setEditTestResult] = useState<TestResult | null>(null);
+  const [editTesting, setEditTesting] = useState(false);
+
+  // Per-profile test result (for list-card test buttons)
+  const [cardTestResults, setCardTestResults] = useState<Record<number, TestResult>>({});
+  const [cardTesting, setCardTesting] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (tab === "users" && isManager) loadUsers();
-    if (tab === "llm") loadLLMConfig();
+    if (tab === "llm") loadProfiles();
   }, [tab]);
 
   async function loadUsers() {
@@ -73,13 +108,15 @@ export default function SettingsPage() {
     }
   }
 
-  async function loadLLMConfig() {
+  async function loadProfiles() {
+    setProfilesLoading(true);
     try {
-      const data = await api.get<LLMConfig>("/settings/llm");
-      setLLMConfig(data);
-      setLLMForm({ base_url: data.base_url, api_key: "", model: data.model });
+      const data = await api.get<LLMProfile[]>("/settings/llm/profiles");
+      setProfiles(data);
     } catch {
-      // form stays blank
+      // list stays empty
+    } finally {
+      setProfilesLoading(false);
     }
   }
 
@@ -125,20 +162,97 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleSaveLLM(e: FormEvent) {
+  async function handleAddProfile(e: FormEvent) {
     e.preventDefault();
-    setLLMError(null);
-    setLLMSuccess(false);
-    setLLMLoading(true);
+    setAddError(null);
+    setAddLoading(true);
     try {
-      await api.put("/settings/llm", llmForm);
-      setLLMSuccess(true);
-      setLLMForm((f) => ({ ...f, api_key: "" }));
-      await loadLLMConfig();
+      await api.post("/settings/llm/profiles", addForm);
+      setAddForm(EMPTY_PROFILE_FORM);
+      setShowAddForm(false);
+      setAddTestResult(null);
+      await loadProfiles();
     } catch (err) {
-      setLLMError(err instanceof Error ? err.message : "Failed to update LLM settings");
+      setAddError(err instanceof Error ? err.message : "Failed to create profile");
     } finally {
-      setLLMLoading(false);
+      setAddLoading(false);
+    }
+  }
+
+  async function handleTestInline(form: ProfileForm, setResult: (r: TestResult | null) => void, setLoading: (b: boolean) => void) {
+    setResult(null);
+    setLoading(true);
+    try {
+      const result = await api.post<TestResult>("/settings/llm/test", {
+        base_url: form.base_url,
+        api_key: form.api_key,
+        model: form.model,
+        is_local: form.is_local,
+      });
+      setResult(result);
+    } catch (err) {
+      setResult({ ok: false, message: err instanceof Error ? err.message : "Request failed", response_ms: null });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleTestProfile(profileId: number) {
+    setCardTesting((prev) => ({ ...prev, [profileId]: true }));
+    setCardTestResults((prev) => { const n = { ...prev }; delete n[profileId]; return n; });
+    try {
+      const result = await api.post<TestResult>(`/settings/llm/profiles/${profileId}/test`, {});
+      setCardTestResults((prev) => ({ ...prev, [profileId]: result }));
+    } catch (err) {
+      setCardTestResults((prev) => ({
+        ...prev,
+        [profileId]: { ok: false, message: err instanceof Error ? err.message : "Request failed", response_ms: null },
+      }));
+    } finally {
+      setCardTesting((prev) => ({ ...prev, [profileId]: false }));
+    }
+  }
+
+  async function handleActivate(profileId: number) {
+    try {
+      await api.post(`/settings/llm/profiles/${profileId}/activate`, {});
+      await loadProfiles();
+    } catch {
+      // ignore
+    }
+  }
+
+  async function handleDelete(profileId: number) {
+    try {
+      await api.delete(`/settings/llm/profiles/${profileId}`);
+      if (editingId === profileId) setEditingId(null);
+      setCardTestResults((prev) => { const n = { ...prev }; delete n[profileId]; return n; });
+      await loadProfiles();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete profile");
+    }
+  }
+
+  function startEdit(p: LLMProfile) {
+    setEditingId(p.id);
+    setEditForm({ name: p.name, base_url: p.base_url, api_key: "", model: p.model, is_local: p.is_local });
+    setEditError(null);
+    setEditTestResult(null);
+  }
+
+  async function handleSaveEdit(e: FormEvent, profileId: number) {
+    e.preventDefault();
+    setEditError(null);
+    setEditLoading(true);
+    try {
+      await api.put(`/settings/llm/profiles/${profileId}`, editForm);
+      setEditingId(null);
+      setEditTestResult(null);
+      await loadProfiles();
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "Failed to update profile");
+    } finally {
+      setEditLoading(false);
     }
   }
 
@@ -399,63 +513,302 @@ export default function SettingsPage() {
 
       {/* LLM tab */}
       {tab === "llm" && (
-        <div className="card" style={{ padding: 24, maxWidth: 480 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>LLM Configuration</h3>
-          <p style={{ fontSize: 13, color: "var(--color-text-3)", marginBottom: 20 }}>
-            These settings apply to your account only.
-          </p>
-          <form
-            onSubmit={handleSaveLLM}
-            style={{ display: "flex", flexDirection: "column", gap: 14 }}
-          >
+        <div style={{ maxWidth: 560 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <div>
-              <label className="form-label">Base URL</label>
-              <input
-                className="input"
-                value={llmForm.base_url}
-                onChange={(e) => setLLMForm((f) => ({ ...f, base_url: e.target.value }))}
-                required
-                placeholder="https://api.openai.com/v1"
-              />
+              <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>LLM Profiles</h3>
+              <p style={{ fontSize: 13, color: "var(--color-text-3)" }}>
+                These settings apply to your account only. One profile is active at a time.
+              </p>
             </div>
-            <div>
-              <label className="form-label">API Key</label>
-              <input
-                className="input"
-                type="password"
-                value={llmForm.api_key}
-                onChange={(e) => setLLMForm((f) => ({ ...f, api_key: e.target.value }))}
-                autoComplete="off"
-                placeholder={
-                  llmConfig
-                    ? `Current: ${llmConfig.api_key_masked} — leave blank to keep`
-                    : "Enter API key"
-                }
-              />
-            </div>
-            <div>
-              <label className="form-label">Model</label>
-              <input
-                className="input"
-                value={llmForm.model}
-                onChange={(e) => setLLMForm((f) => ({ ...f, model: e.target.value }))}
-                required
-                placeholder="gpt-4o"
-              />
-            </div>
-            {llmError && <div className="notice notice-danger">{llmError}</div>}
-            {llmSuccess && (
-              <div className="notice notice-success">LLM settings updated.</div>
-            )}
             <button
-              type="submit"
-              disabled={llmLoading}
               className="btn btn-primary"
-              style={{ marginTop: 4 }}
+              style={{ fontSize: 13, whiteSpace: "nowrap" }}
+              onClick={() => {
+                setShowAddForm((v) => !v);
+                setAddError(null);
+                setAddTestResult(null);
+                setAddForm(EMPTY_PROFILE_FORM);
+              }}
             >
-              {llmLoading ? "Saving…" : "Save LLM Settings"}
+              {showAddForm ? "Cancel" : "+ Add Profile"}
             </button>
-          </form>
+          </div>
+
+          {/* Add profile form */}
+          {showAddForm && (
+            <form
+              onSubmit={handleAddProfile}
+              className="card"
+              style={{ padding: 20, marginBottom: 16, display: "flex", flexDirection: "column", gap: 12 }}
+            >
+              <h4 style={{ fontSize: 13, fontWeight: 600 }}>New Profile</h4>
+              <div>
+                <label className="form-label">Name</label>
+                <input
+                  className="input"
+                  value={addForm.name}
+                  onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+                  required
+                  placeholder="e.g. OpenAI GPT-4"
+                />
+              </div>
+              <div>
+                <label className="form-label">Base URL</label>
+                <input
+                  className="input"
+                  value={addForm.base_url}
+                  onChange={(e) => setAddForm((f) => ({ ...f, base_url: e.target.value }))}
+                  required
+                  placeholder={addForm.is_local ? "http://127.0.0.1:8080/v1" : "https://api.openai.com/v1"}
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", fontSize: 13, color: "var(--color-text-3)" }}>
+                  <input
+                    type="checkbox"
+                    checked={addForm.is_local}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAddForm((f) => ({
+                        ...f,
+                        is_local: checked,
+                        base_url: checked && !f.base_url ? "http://127.0.0.1:8080/v1" : f.base_url,
+                        api_key: checked && !f.api_key ? "no-key-needed" : f.api_key,
+                      }));
+                    }}
+                  />
+                  Local server
+                </label>
+              </div>
+              <div>
+                <label className="form-label">API Key</label>
+                <input
+                  className="input"
+                  type="password"
+                  value={addForm.api_key}
+                  onChange={(e) => setAddForm((f) => ({ ...f, api_key: e.target.value }))}
+                  required
+                  autoComplete="off"
+                  placeholder={addForm.is_local ? "no-key-needed" : "sk-..."}
+                />
+              </div>
+              <div>
+                <label className="form-label">Model</label>
+                <input
+                  className="input"
+                  value={addForm.model}
+                  onChange={(e) => setAddForm((f) => ({ ...f, model: e.target.value }))}
+                  required
+                  placeholder="gpt-4o"
+                />
+              </div>
+              {addError && <div className="notice notice-danger">{addError}</div>}
+              {addTestResult && (
+                <div className={`notice ${addTestResult.ok ? "notice-success" : "notice-danger"}`}>
+                  {addTestResult.ok
+                    ? `Connected (${addTestResult.response_ms}ms)`
+                    : addTestResult.message}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  disabled={addTesting || !addForm.base_url || !addForm.api_key || !addForm.model}
+                  className="btn"
+                  style={{ fontSize: 13 }}
+                  onClick={() => handleTestInline(addForm, setAddTestResult, setAddTesting)}
+                >
+                  {addTesting ? "Testing…" : "Test Connection"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={addLoading}
+                  className="btn btn-primary"
+                  style={{ fontSize: 13 }}
+                >
+                  {addLoading ? "Saving…" : "Save Profile"}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Profile list */}
+          {profilesLoading ? (
+            <p style={{ color: "var(--color-text-3)", fontSize: 13 }}>Loading…</p>
+          ) : profiles.length === 0 ? (
+            <div className="card" style={{ padding: 24, textAlign: "center", color: "var(--color-text-3)", fontSize: 13 }}>
+              No profiles yet. Add one to configure LLM access.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {profiles.map((p) => (
+                <div key={p.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
+                  {/* Card header */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "14px 16px",
+                      borderBottom: editingId === p.id ? "1px solid var(--color-border)" : "none",
+                    }}
+                  >
+                    <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>{p.name}</span>
+                    {p.is_local && (
+                      <span className="badge badge-muted" style={{ fontSize: 11 }}>Local</span>
+                    )}
+                    {p.is_active && (
+                      <span className="badge badge-success" style={{ fontSize: 11 }}>Active</span>
+                    )}
+                    {!p.is_active && (
+                      <button
+                        className="btn"
+                        style={{ fontSize: 12, padding: "3px 10px" }}
+                        onClick={() => handleActivate(p.id)}
+                      >
+                        Set Active
+                      </button>
+                    )}
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, padding: "3px 10px" }}
+                      disabled={cardTesting[p.id]}
+                      onClick={() => handleTestProfile(p.id)}
+                    >
+                      {cardTesting[p.id] ? "Testing…" : "Test"}
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ fontSize: 12, padding: "3px 10px" }}
+                      onClick={() => {
+                        if (editingId === p.id) {
+                          setEditingId(null);
+                        } else {
+                          startEdit(p);
+                        }
+                      }}
+                    >
+                      {editingId === p.id ? "Cancel" : "Edit"}
+                    </button>
+                    {profiles.length > 1 && (
+                      <button
+                        className="btn btn-danger-ghost"
+                        style={{ fontSize: 12, padding: "3px 10px" }}
+                        onClick={() => {
+                          if (confirm(`Delete profile "${p.name}"?`)) handleDelete(p.id);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Subtitle row */}
+                  {editingId !== p.id && (
+                    <div style={{ padding: "6px 16px 12px", fontSize: 12, color: "var(--color-text-3)" }}>
+                      {p.base_url} · {p.model} · key: {p.api_key_masked}
+                      {cardTestResults[p.id] && (
+                        <span
+                          style={{
+                            marginLeft: 12,
+                            color: cardTestResults[p.id].ok ? "var(--color-success)" : "var(--color-danger)",
+                          }}
+                        >
+                          {cardTestResults[p.id].ok
+                            ? `Connected (${cardTestResults[p.id].response_ms}ms)`
+                            : cardTestResults[p.id].message}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Inline edit form */}
+                  {editingId === p.id && (
+                    <form
+                      onSubmit={(e) => handleSaveEdit(e, p.id)}
+                      style={{ padding: 16, display: "flex", flexDirection: "column", gap: 12 }}
+                    >
+                      <div>
+                        <label className="form-label">Name</label>
+                        <input
+                          className="input"
+                          value={editForm.name}
+                          onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="form-label">Base URL</label>
+                        <input
+                          className="input"
+                          value={editForm.base_url}
+                          onChange={(e) => setEditForm((f) => ({ ...f, base_url: e.target.value }))}
+                          required
+                        />
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", fontSize: 13, color: "var(--color-text-3)" }}>
+                          <input
+                            type="checkbox"
+                            checked={editForm.is_local}
+                            onChange={(e) => setEditForm((f) => ({ ...f, is_local: e.target.checked }))}
+                          />
+                          Local server
+                        </label>
+                      </div>
+                      <div>
+                        <label className="form-label">API Key</label>
+                        <input
+                          className="input"
+                          type="password"
+                          value={editForm.api_key}
+                          onChange={(e) => setEditForm((f) => ({ ...f, api_key: e.target.value }))}
+                          autoComplete="off"
+                          placeholder={`Current: ${p.api_key_masked} — leave blank to keep`}
+                        />
+                      </div>
+                      <div>
+                        <label className="form-label">Model</label>
+                        <input
+                          className="input"
+                          value={editForm.model}
+                          onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))}
+                          required
+                        />
+                      </div>
+                      {editError && <div className="notice notice-danger">{editError}</div>}
+                      {editTestResult && (
+                        <div className={`notice ${editTestResult.ok ? "notice-success" : "notice-danger"}`}>
+                          {editTestResult.ok
+                            ? `Connected (${editTestResult.response_ms}ms)`
+                            : editTestResult.message}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          type="button"
+                          disabled={editTesting || !editForm.base_url || !editForm.model}
+                          className="btn"
+                          style={{ fontSize: 13 }}
+                          onClick={() => {
+                            const form = { ...editForm, api_key: editForm.api_key || p.api_key_masked };
+                            handleTestInline(form, setEditTestResult, setEditTesting);
+                          }}
+                        >
+                          {editTesting ? "Testing…" : "Test Connection"}
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={editLoading}
+                          className="btn btn-primary"
+                          style={{ fontSize: 13 }}
+                        >
+                          {editLoading ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

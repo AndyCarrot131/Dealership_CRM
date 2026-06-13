@@ -1,9 +1,10 @@
 const BASE = "/api";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, json = true): Promise<T> {
   const token = sessionStorage.getItem("crm_token");
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // FormData bodies must omit Content-Type so the browser sets the multipart boundary
+    ...(json ? { "Content-Type": "application/json" } : {}),
     ...(init?.headers as Record<string, string>),
   };
   if (token) {
@@ -31,4 +32,6 @@ export const api = {
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  upload: <T>(path: string, formData: FormData) =>
+    request<T>(path, { method: "POST", body: formData }, false),
 };

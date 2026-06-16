@@ -14,9 +14,10 @@ Each category section MUST contain exactly {subsection_count} sub-sections:{subj
 
 ### Format
 Describe the structural/layout conventions observed in the samples:
-- Message length (e.g. 2-3 short paragraphs, under 80 words)
+- Message length (give realistic ranges; avoid strict limits unless samples consistently enforce them)
 - Opening line pattern (greeting style, whether name is used)
 - Body structure (e.g. one hook sentence → offer → CTA)
+- Add a "Paragraph plan" list that explains what each paragraph should cover (P1, P2, P3...) and a suggested word range per paragraph
 - Closing line pattern (sign-off, signature style)
 - Paragraph count and spacing habits
 - Use of bullet points, line breaks, or lists
@@ -29,14 +30,25 @@ Describe the voice and language patterns:
 - How they reference vehicles (make/model/year/trim usage)
 - Use of emojis, punctuation quirks, or capitalisation habits
 - Anything that makes this person's writing instantly recognisable
+- If the closing/signature phrase is consistent, capture the exact required wording verbatim in quotes
 
+After those required sub-sections, add a short "### Operational Rules" section for each category with:
+- Goal (what the email is trying to achieve for this category)
+- Personalization fields to include (e.g. [FirstName], [Year Model], relevant date, [Phone])
+- CTA standard (one primary action at the end)
+- Language guardrails (non-pushy phrasing, no overpromising, no fabricated offers)
+- A 4-6 item quality checklist for before-send review
+- For lease/finance ending categories, if samples use a named options block, explicitly define the required heading and option-label format (e.g., "Option 1/2/3")
+
+Prefer specific, reusable rules over abstract advice.
+Word-count guidance should be presented as suggestions, not hard constraints.
 Output a clean markdown document. Do NOT include any samples verbatim."""
 
 _SUBJECT_LINE_SECTION = """
 
 ### Subject Line
 Describe the subject line patterns observed across the samples:
-- Typical length (e.g. under 6 words, one short phrase)
+- Typical length (capture what works in practice; for email this is often around 4-9 words)
 - Tone and urgency (e.g. friendly teaser, direct offer, question)
 - Use of personalisation (customer name, vehicle details)
 - Common openers or formulas (e.g. "Your [Year] [Model] is ready", "Quick update on…")

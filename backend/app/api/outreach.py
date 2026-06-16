@@ -16,7 +16,7 @@ from app.models.customer import Customer
 from app.models.interaction import Interaction
 from app.models.inventory import Inventory
 from app.models.outreach import EmailDraft, OutreachRule
-from app.models.style import StyleProfile
+from app.models.style import StyleExtraRule, StyleProfile
 from app.models.user import User
 from app.services.filter_compiler import compile_filter, preview_sql
 
@@ -61,6 +61,7 @@ class RuleOut(BaseModel):
 class RunRequest(BaseModel):
     email_type: Optional[str] = None
     custom_template: Optional[str] = None
+    selected_customer_ids: Optional[list[int]] = None
 
 
 class RunResult(BaseModel):
@@ -230,7 +231,11 @@ async def run_rule(
     )
 
     customers = await _match_customers(rule, current_user.id, db)
+    if body.selected_customer_ids is not None:
+        selected_ids = {int(cid) for cid in body.selected_customer_ids}
+        customers = [c for c in customers if c.id in selected_ids]
     style_md = await _fetch_style_md(current_user.id, db)
+    style_extra_rules = await _fetch_style_extra_rules(current_user.id, db)
     style_guide_active = bool(style_md)
 
     customer_ids = [c.id for c in customers]
@@ -266,6 +271,7 @@ async def run_rule(
         customer_dict = {
             "id": customer.id,
             "full_name": customer.full_name,
+            "phone": customer.phone,
             "note": customer.note,
             "cars": [
                 {
@@ -293,6 +299,7 @@ async def run_rule(
                 matching_inv,
                 style_md,
                 llm,
+                extra_rules=style_extra_rules,
                 email_type=effective_email_type,
                 custom_template=effective_template,
             )
@@ -519,6 +526,17 @@ async def _fetch_style_md(sales_id: int, db: AsyncSession) -> str:
     )
     profile = result.scalar_one_or_none()
     return profile.style_md if profile else ""
+
+
+async def _fetch_style_extra_rules(sales_id: int, db: AsyncSession) -> list[str]:
+    result = await db.execute(
+        select(StyleExtraRule)
+        .where(StyleExtraRule.sales_id == sales_id)
+        .where(StyleExtraRule.active.is_(True))
+        .where(StyleExtraRule.channel.in_(("email", "both")))
+        .order_by(StyleExtraRule.created_at.asc())
+    )
+    return [r.rule_text.strip() for r in result.scalars().all() if (r.rule_text or "").strip()]
 
 
 def _customer_to_matched(customer: Customer) -> MatchedCustomer:

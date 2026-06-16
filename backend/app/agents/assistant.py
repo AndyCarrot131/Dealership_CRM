@@ -15,7 +15,7 @@ from app.agents.email_composer import compose_email
 from app.llm.client import LLMClient
 from app.models.customer import Customer
 from app.models.inventory import Inventory
-from app.models.style import StyleProfile
+from app.models.style import StyleExtraRule, StyleProfile
 from app.models.user import User
 from app.services.sql_tool import run_select
 
@@ -241,6 +241,19 @@ async def _execute_compose_draft(
     style_profile = style_result.scalar_one_or_none()
     style_md = style_profile.style_md if style_profile else ""
 
+    rules_result = await db.execute(
+        select(StyleExtraRule)
+        .where(StyleExtraRule.sales_id == user.id)
+        .where(StyleExtraRule.active.is_(True))
+        .where(StyleExtraRule.channel.in_(("email", "both")))
+        .order_by(StyleExtraRule.created_at.asc())
+    )
+    style_rules = [
+        rule.rule_text.strip()
+        for rule in rules_result.scalars().all()
+        if (rule.rule_text or "").strip()
+    ]
+
     inv_result = await db.execute(
         select(Inventory).where(Inventory.status == "available").limit(20)
     )
@@ -259,6 +272,7 @@ async def _execute_compose_draft(
     customer_dict = {
         "id": customer.id,
         "full_name": customer.full_name,
+        "phone": customer.phone,
         "note": customer.note,
         "cars": [
             {
@@ -280,6 +294,7 @@ async def _execute_compose_draft(
             matched_inv,
             style_md,
             llm,
+            extra_rules=style_rules,
             email_type=email_type,
             custom_template=purpose or None,
         )

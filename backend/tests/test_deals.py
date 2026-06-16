@@ -2,6 +2,7 @@
 import json
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -454,6 +455,10 @@ def _text_response(content: str) -> dict:
     }
 
 
+def _cv2_missing():
+    return patch("app.agents.deal_extractor.cv2", None), patch("app.agents.deal_extractor.np", None)
+
+
 @pytest.fixture
 def uploads_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "uploads_dir", str(tmp_path))
@@ -540,6 +545,90 @@ async def test_extract_returns_preview_and_candidates(
     assert (uploads_tmp / "deals" / body["image_filename"]).exists()
     # vision call used extended limits
     assert fake.calls[0]["timeout"] == 300
+
+
+async def test_extract_uses_best_pseudo_scan_when_primary_is_bad(
+    client, db_session, sales_user, sales_headers, uploads_tmp
+):
+    await _seed_customer(db_session, sales_user)
+    bad = dict(_EXTRACTION_JSON)
+    bad.update(
+        {
+            "deal_type": "lease",
+            "term": 36,
+            "num_payments": 36,
+            "payment_frequency": "monthly",
+            "payment_amount": 1211.11,
+            "line_items": [],
+            "rate_pct": 5.99,
+        }
+    )
+    good = dict(_EXTRACTION_JSON)
+    good.update(
+        {
+            "deal_type": "lease",
+            "term": 48,
+            "num_payments": 104,
+            "payment_frequency": "biweekly",
+            "payment_amount": 253.29,
+            "base_payment": 220.25,
+            "rate_pct": 5.99,
+        }
+    )
+    fake = FakeLLM(
+        [
+            _text_response(json.dumps(bad)),
+            _text_response(json.dumps(good)),
+            _text_response(json.dumps(good)),  # focused lease pass
+        ]
+    )
+    app.dependency_overrides[deals_api._llm_for_extract] = lambda: fake
+    try:
+        with patch(
+            "app.agents.deal_extractor._build_pseudo_scans",
+            return_value=[("edge_lease", b"scanpng", "image/png")],
+        ):
+            resp = await client.post(
+                "/api/deals/extract",
+                files={"file": ("contract.jpg", b"\xff\xd8fakejpeg", "image/jpeg")},
+                headers=sales_headers,
+            )
+    finally:
+        del app.dependency_overrides[deals_api._llm_for_extract]
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    extracted = body["extracted"]
+    assert extracted["deal_type"] == "lease"
+    assert extracted["term"] == 48
+    assert extracted["num_payments"] == 104
+    assert extracted["payment_frequency"] == "biweekly"
+    assert extracted["payment_amount"] == 253.29
+    assert body["raw"]["image_pass"] == "edge_lease"
+    assert len(fake.calls) >= 2
+
+
+async def test_extract_skips_pseudo_scan_when_opencv_unavailable(
+    client, db_session, sales_user, sales_headers, uploads_tmp
+):
+    await _seed_customer(db_session, sales_user)
+    fake = FakeLLM([_text_response(json.dumps(_EXTRACTION_JSON))])
+    app.dependency_overrides[deals_api._llm_for_extract] = lambda: fake
+    try:
+        cv2_patch, np_patch = _cv2_missing()
+        with cv2_patch, np_patch:
+            resp = await client.post(
+                "/api/deals/extract",
+                files={"file": ("contract.jpg", b"\xff\xd8fakejpeg", "image/jpeg")},
+                headers=sales_headers,
+            )
+    finally:
+        del app.dependency_overrides[deals_api._llm_for_extract]
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["raw"]["image_pass"] == "original"
+    assert len(fake.calls) == 1
 
 
 async def test_extract_rejects_non_image(client, sales_headers, uploads_tmp):

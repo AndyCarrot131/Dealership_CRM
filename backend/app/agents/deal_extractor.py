@@ -12,6 +12,13 @@ import re
 from datetime import date, datetime
 from typing import Any
 
+try:
+    import cv2  # type: ignore[import-not-found]
+    import numpy as np  # type: ignore[import-not-found]
+except Exception:  # pragma: no cover - optional runtime dependency for scan preprocessing
+    cv2 = None
+    np = None
+
 from app.llm.client import LLMClient
 
 _SYSTEM = """You are a vehicle deal-contract extraction assistant for a car dealership CRM.
@@ -280,6 +287,223 @@ Row mapping (Canadian O'Regan / VW-style sheets):
 NEVER output round placeholder guesses (1000, 2500, 5000). Use null when a row is illegible.
 capital_cost must exceed selling_price. drive_off_total is typically $8k–$15k on leases, not $40k.
 """
+
+
+def _order_points(pts: Any) -> Any:
+    points = np.array(pts, dtype=np.float32)
+    sums = points.sum(axis=1)
+    diffs = np.diff(points, axis=1)
+    return np.array(
+        [
+            points[np.argmin(sums)],
+            points[np.argmin(diffs)],
+            points[np.argmax(sums)],
+            points[np.argmax(diffs)],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _find_quad_from_contours(
+    contours: list[Any], width: int, height: int, min_area_ratio: float
+) -> Any:
+    min_area = width * height * min_area_ratio
+    best = None
+    best_area = 0.0
+    for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:15]:
+        area = cv2.contourArea(cnt)
+        if area < min_area:
+            continue
+        peri = cv2.arcLength(cnt, True)
+        for eps in (0.01, 0.015, 0.02, 0.025, 0.03, 0.04):
+            approx = cv2.approxPolyDP(cnt, eps * peri, True)
+            if len(approx) == 4 and area > best_area:
+                best = approx.reshape(4, 2)
+                best_area = area
+    return best
+
+
+def _find_quad_color(image: Any) -> tuple[Any, float]:
+    h, w = image.shape[:2]
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 120), (180, 80, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(
+        mask, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5)), iterations=1
+    )
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    quad = _find_quad_from_contours(contours, w, h, 0.10)
+    if quad is None:
+        full = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+        return full, 1.0
+    return quad, cv2.contourArea(quad.astype(np.int32)) / (w * h)
+
+
+def _find_quad_edge(gray: Any) -> tuple[Any, float]:
+    h, w = gray.shape
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    best = None
+    best_area = 0.0
+    for lo, hi in ((30, 100), (50, 150), (75, 200)):
+        edges = cv2.Canny(blur, lo, hi)
+        edges = cv2.morphologyEx(
+            edges,
+            cv2.MORPH_CLOSE,
+            cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)),
+            iterations=2,
+        )
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        quad = _find_quad_from_contours(contours, w, h, 0.15)
+        if quad is not None:
+            area = cv2.contourArea(quad.astype(np.int32))
+            if area > best_area:
+                best = quad
+                best_area = area
+    if best is None:
+        full = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+        return full, 1.0
+    return best, best_area / (w * h)
+
+
+def _warp_perspective(image: Any, corners: Any) -> Any:
+    rect = _order_points(corners)
+    tl, tr, br, bl = rect
+    width = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+    height = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+    if width <= 0 or height <= 0:
+        return image
+    dst = np.array(
+        [[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+        dtype=np.float32,
+    )
+    matrix = cv2.getPerspectiveTransform(rect, dst)
+    return cv2.warpPerspective(image, matrix, (width, height), flags=cv2.INTER_CUBIC)
+
+
+def _upscale(image: Any, min_long: int = 1800) -> Any:
+    h, w = image.shape[:2]
+    long_edge = max(h, w)
+    if long_edge >= min_long:
+        return image
+    scale = min_long / long_edge
+    return cv2.resize(image, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
+
+def _binarize(warped: Any, block_size: int = 31, c: int = 10) -> Any:
+    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    gray = cv2.fastNlMeansDenoising(gray, None, 8, 7, 21)
+    gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, block_size, c
+    )
+    if np.mean(binary) < 127:
+        binary = cv2.bitwise_not(binary)
+    return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+
+
+def _soften_for_ocr(warped: Any) -> Any:
+    gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+    gray = cv2.fastNlMeansDenoising(gray, None, 6, 7, 21)
+    gray = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8)).apply(gray)
+    return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+
+
+def _encode_png(image: Any) -> bytes:
+    ok, buf = cv2.imencode(".png", image)
+    if not ok:
+        raise ValueError("Failed to encode pseudo-scan image")
+    return bytes(buf.tobytes())
+
+
+def _build_pseudo_scans(image_bytes: bytes) -> list[tuple[str, bytes, str]]:
+    """Return pseudo-scans for retrying hard OCR pages.
+
+    Output tuples are: (scan_name, png_bytes, mime).
+    """
+    if cv2 is None or np is None:
+        return []
+    array = np.frombuffer(image_bytes, dtype=np.uint8)
+    image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    if image is None:
+        return []
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    color_corners, _color_ratio = _find_quad_color(image)
+    edge_corners, _edge_ratio = _find_quad_edge(gray)
+
+    color_warp = _binarize(_upscale(_warp_perspective(image, color_corners)))
+    edge_warp = _binarize(_upscale(_warp_perspective(image, edge_corners)))
+    edge_soft = _soften_for_ocr(_upscale(_warp_perspective(image, edge_corners)))
+
+    scans: list[tuple[str, bytes, str]] = []
+    h_color = color_warp.shape[0]
+    color_header = color_warp[: int(h_color * 0.60), :]
+    scans.append(("color_header", _encode_png(color_header), "image/png"))
+    scans.append(("edge_lease", _encode_png(edge_warp), "image/png"))
+    right_start = int(edge_warp.shape[1] * 0.52)
+    scans.append(("edge_amounts", _encode_png(edge_warp[:, right_start:]), "image/png"))
+    scans.append(("edge_soft", _encode_png(edge_soft), "image/png"))
+    return scans
+
+
+async def _extract_primary_pass(
+    image_bytes: bytes,
+    mime: str,
+    llm: LLMClient,
+) -> dict[str, Any]:
+    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    response = await llm.chat(
+        [
+            {"role": "system", "content": _SYSTEM},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{image_b64}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Extract this deal contract. Respond with ONLY the JSON object. "
+                            "In the Lease table read each row separately: Term (e.g. 48), "
+                            "Payment Frequency (e.g. Bi-Weekly), Number of Payments (e.g. 104), "
+                            "and the printed Payment amount (e.g. 253.29). "
+                            "Never set num_payments equal to term unless the sheet shows that."
+                        ),
+                    },
+                ],
+            },
+        ],
+        timeout=300,  # local vision inference can take minutes
+        temperature=0.0,
+        max_tokens=4096,
+    )
+    message = response["choices"][0]["message"]
+    return _parse_model_message(message)
+
+
+def _score_extraction_candidate(extracted: dict[str, Any], parsed: dict[str, Any]) -> int:
+    score = 0
+    if extracted.get("deal_type") in _DEAL_TYPES:
+        score += 10
+    for field in ("make", "model", "model_year", "selling_price", "contract_date"):
+        if extracted.get(field) not in (None, ""):
+            score += 4
+    if extracted.get("deal_type") == "lease":
+        for field in ("term", "num_payments", "payment_frequency", "payment_amount", "rate_pct"):
+            if extracted.get(field) not in (None, ""):
+                score += 5
+    if extracted.get("line_items"):
+        score += min(10, len(extracted["line_items"]) * 2)
+    if extracted.get("confidence") is not None:
+        score += int(float(extracted["confidence"]) * 10)
+    if _terms_look_suspicious(extracted, parsed):
+        score -= 18
+    if _pricing_looks_suspicious(extracted):
+        score -= 14
+    return score
 
 
 def _walk_dict(obj: Any) -> list[tuple[str, Any]]:
@@ -1535,38 +1759,27 @@ def _parse_model_message(message: dict[str, Any]) -> dict[str, Any]:
 
 async def run_deal_extractor(image_bytes: bytes, mime: str, llm: LLMClient) -> dict[str, Any]:
     """Returns {"extracted": <cleaned fields>, "raw": <full parsed model output>}."""
-    image_b64 = base64.b64encode(image_bytes).decode("utf-8")
-    response = await llm.chat(
-        [
-            {"role": "system", "content": _SYSTEM},
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{image_b64}"},
-                    },
-                    {
-                        "type": "text",
-                        "text": (
-                            "Extract this deal contract. Respond with ONLY the JSON object. "
-                            "In the Lease table read each row separately: Term (e.g. 48), "
-                            "Payment Frequency (e.g. Bi-Weekly), Number of Payments (e.g. 104), "
-                            "and the printed Payment amount (e.g. 253.29). "
-                            "Never set num_payments equal to term unless the sheet shows that."
-                        ),
-                    },
-                ],
-            },
-        ],
-        timeout=300,  # local vision inference can take minutes
-        temperature=0.0,
-        max_tokens=4096,
-    )
-
-    message = response["choices"][0]["message"]
-    parsed = _parse_model_message(message)
+    parsed = await _extract_primary_pass(image_bytes, mime, llm)
     extracted = _clean(parsed)
+    best_name = "original"
+    best_score = _score_extraction_candidate(extracted, parsed)
+
+    # Retry with pseudo-scan variants only when primary extraction looks weak.
+    if _terms_look_suspicious(extracted, parsed) or _pricing_looks_suspicious(extracted):
+        for scan_name, scan_bytes, scan_mime in _build_pseudo_scans(image_bytes):
+            try:
+                scan_parsed = await _extract_primary_pass(scan_bytes, scan_mime, llm)
+                scan_extracted = _clean(scan_parsed)
+                scan_score = _score_extraction_candidate(scan_extracted, scan_parsed)
+            except Exception:
+                continue
+            if scan_score > best_score:
+                parsed = scan_parsed
+                extracted = scan_extracted
+                best_score = scan_score
+                best_name = scan_name
+
+    parsed["image_pass"] = best_name
 
     deal_type = extracted.get("deal_type")
     needs_focused_pass = deal_type in ("lease", "finance") and (

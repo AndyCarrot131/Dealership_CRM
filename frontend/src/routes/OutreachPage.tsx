@@ -448,6 +448,9 @@ function RunModal({
       const result = await api.post<RunResult>(`/outreach/rules/${rule.id}/run`, {
         email_type: emailType,
         custom_template: emailType === "custom" ? customTemplate.trim() || null : null,
+        selected_customer_ids: customers
+          .filter((c) => !ignoredCustomers.has(c.id))
+          .map((c) => c.id),
         customer_channels: activeChannels,
       });
       setDraftsCreated(result.drafts_created);

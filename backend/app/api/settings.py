@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user, require_manager
 from app.auth.hashing import hash_password, verify_password
 from app.db import get_db
+from app.models.llm_log import LLMRequestLog
 from app.models.llm_profile import LLMProfile
 from app.models.user import User
 from app.schemas.settings import (
@@ -12,6 +13,7 @@ from app.schemas.settings import (
     CreateUserRequest,
     LLMConfigOut,
     LLMConfigUpdate,
+    LLMLogItem,
     LLMProfileCreate,
     LLMProfileOut,
     LLMProfileUpdate,
@@ -283,3 +285,45 @@ async def test_llm_profile(
 
     test = await test_llm_connection(profile.base_url, profile.api_key, profile.model)
     return LLMTestResult(ok=test.ok, message=test.message, response_ms=test.response_ms)
+
+
+# ── LLM request log ───────────────────────────────────────────────────────────
+
+@router.get("/llm/logs", response_model=list[LLMLogItem])
+async def list_llm_logs(
+    _: User = Depends(require_manager),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=100, le=500),
+) -> list[LLMLogItem]:
+    result = await db.execute(
+        select(LLMRequestLog).order_by(LLMRequestLog.created_at.desc()).limit(limit)
+    )
+    items: list[LLMLogItem] = []
+    for log in result.scalars():
+        # Last user message from the request messages array
+        input_text: str | None = None
+        if isinstance(log.input, dict):
+            messages = log.input.get("messages", [])
+            user_msgs = [m.get("content", "") for m in messages if m.get("role") == "user"]
+            if user_msgs:
+                raw = user_msgs[-1]
+                input_text = raw if isinstance(raw, str) else str(raw)
+
+        # Assistant reply from the first choice
+        output_text: str | None = None
+        if isinstance(log.output, dict):
+            choices = log.output.get("choices", [])
+            if choices:
+                output_text = choices[0].get("message", {}).get("content")
+
+        items.append(
+            LLMLogItem(
+                id=log.id,
+                model=log.model,
+                url=log.url,
+                created_at=log.created_at,
+                input_text=input_text,
+                output_text=output_text,
+            )
+        )
+    return items

@@ -75,3 +75,12 @@ class LLMTestResult(BaseModel):
     ok: bool
     message: str
     response_ms: int | None
+
+
+class LLMLogItem(BaseModel):
+    id: int
+    model: str
+    url: str
+    created_at: datetime
+    input_text: str | None
+    output_text: str | None

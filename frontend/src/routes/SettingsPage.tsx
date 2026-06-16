@@ -1,4 +1,4 @@
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, useCallback, FormEvent } from "react";
 import { useAuth } from "../context/AuthContext";
 import { api } from "../api/client";
 
@@ -22,6 +22,15 @@ interface LLMProfile {
   is_active: boolean;
   is_local: boolean;
   created_at: string;
+}
+
+interface LLMLogItem {
+  id: number;
+  model: string;
+  url: string;
+  created_at: string;
+  input_text: string | null;
+  output_text: string | null;
 }
 
 interface ProfileForm {
@@ -91,9 +100,18 @@ export default function SettingsPage() {
   const [cardTestResults, setCardTestResults] = useState<Record<number, TestResult>>({});
   const [cardTesting, setCardTesting] = useState<Record<number, boolean>>({});
 
+  // LLM log
+  const [llmLogs, setLlmLogs] = useState<LLMLogItem[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [expandedContent, setExpandedContent] = useState<{ label: string; text: string } | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
   useEffect(() => {
     if (tab === "users" && isManager) loadUsers();
-    if (tab === "llm") loadProfiles();
+    if (tab === "llm") {
+      loadProfiles();
+      if (isManager) loadLlmLogs();
+    }
   }, [tab]);
 
   async function loadUsers() {
@@ -119,6 +137,43 @@ export default function SettingsPage() {
       setProfilesLoading(false);
     }
   }
+
+  async function loadLlmLogs() {
+    setLogsLoading(true);
+    try {
+      const data = await api.get<LLMLogItem[]>("/settings/llm/logs");
+      setLlmLogs(data);
+    } catch {
+      // stays empty
+    } finally {
+      setLogsLoading(false);
+    }
+  }
+
+  function truncate(s: string | null, max = 120) {
+    if (!s) return "—";
+    return s.length > max ? s.slice(0, max) + "…" : s;
+  }
+
+  function fmtTime(iso: string) {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+  }
+
+  function truncateUrl(url: string, max = 40) {
+    if (url.length <= max) return url;
+    return url.slice(0, max) + "…";
+  }
+
+  const copyText = useCallback((text: string, key: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(key);
+      setTimeout(() => setCopiedId((c) => (c === key ? null : c)), 1500);
+    });
+  }, []);
 
   async function handleChangePassword(e: FormEvent) {
     e.preventDefault();
@@ -807,6 +862,200 @@ export default function SettingsPage() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* LLM Request Log — managers only, breaks out of 560px column */}
+          {isManager && (
+            <div style={{ marginTop: 36, marginLeft: "calc(-1 * 0px)", width: "min(900px, calc(100vw - 120px))" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 2 }}>LLM Request Log</h3>
+                  <p style={{ fontSize: 13, color: "var(--color-text-3)" }}>
+                    Most recent 100 requests across all agents.
+                  </p>
+                </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: 13 }}
+                  onClick={() => loadLlmLogs()}
+                  disabled={logsLoading}
+                >
+                  {logsLoading ? "Loading…" : "Refresh"}
+                </button>
+              </div>
+
+              <div className="card" style={{ overflow: "auto", maxHeight: 460 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, tableLayout: "fixed" }}>
+                  <colgroup>
+                    <col style={{ width: 148 }} />
+                    <col style={{ width: 160 }} />
+                    <col style={{ width: 180 }} />
+                    <col />
+                    <col />
+                  </colgroup>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                      {["Time", "Model", "URL", "Input", "Output"].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            textAlign: "left",
+                            padding: "9px 14px",
+                            fontWeight: 600,
+                            color: "var(--color-text-3)",
+                            whiteSpace: "nowrap",
+                            position: "sticky",
+                            top: 0,
+                            background: "var(--color-surface)",
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {llmLogs.map((log) => (
+                      <tr key={log.id} style={{ borderBottom: "1px solid var(--color-border)" }}>
+                        <td style={{ padding: "8px 14px", whiteSpace: "nowrap", color: "var(--color-text-3)" }}>
+                          {fmtTime(log.created_at)}
+                        </td>
+                        <td style={{ padding: "8px 14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {log.model}
+                        </td>
+                        <td
+                          style={{ padding: "8px 14px", color: "var(--color-text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                          title={log.url}
+                        >
+                          {truncateUrl(log.url)}
+                        </td>
+
+                        {/* Input cell */}
+                        <td style={{ padding: "6px 14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span
+                              style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-2)" }}
+                              title={log.input_text ?? undefined}
+                            >
+                              {truncate(log.input_text)}
+                            </span>
+                            {log.input_text && (
+                              <>
+                                <button
+                                  className="btn"
+                                  style={{ fontSize: 11, padding: "2px 7px", flexShrink: 0 }}
+                                  title="Copy input"
+                                  onClick={() => copyText(log.input_text!, `in-${log.id}`)}
+                                >
+                                  {copiedId === `in-${log.id}` ? "Copied" : "Copy"}
+                                </button>
+                                <button
+                                  className="btn"
+                                  style={{ fontSize: 11, padding: "2px 7px", flexShrink: 0 }}
+                                  title="Expand input"
+                                  onClick={() => setExpandedContent({ label: `Input — ${log.model}`, text: log.input_text! })}
+                                >
+                                  ⤢
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Output cell */}
+                        <td style={{ padding: "6px 14px" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span
+                              style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-2)" }}
+                              title={log.output_text ?? undefined}
+                            >
+                              {truncate(log.output_text)}
+                            </span>
+                            {log.output_text && (
+                              <>
+                                <button
+                                  className="btn"
+                                  style={{ fontSize: 11, padding: "2px 7px", flexShrink: 0 }}
+                                  title="Copy output"
+                                  onClick={() => copyText(log.output_text!, `out-${log.id}`)}
+                                >
+                                  {copiedId === `out-${log.id}` ? "Copied" : "Copy"}
+                                </button>
+                                <button
+                                  className="btn"
+                                  style={{ fontSize: 11, padding: "2px 7px", flexShrink: 0 }}
+                                  title="Expand output"
+                                  onClick={() => setExpandedContent({ label: `Output — ${log.model}`, text: log.output_text! })}
+                                >
+                                  ⤢
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!logsLoading && llmLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={5} style={{ padding: "20px 14px", textAlign: "center", color: "var(--color-text-3)" }}>
+                          No requests logged yet.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Expand modal */}
+          {expandedContent && (
+            <div
+              style={{
+                position: "fixed", inset: 0, zIndex: 1000,
+                background: "rgba(0,0,0,0.45)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                padding: 24,
+              }}
+              onClick={() => setExpandedContent(null)}
+            >
+              <div
+                className="card"
+                style={{ width: "min(720px, 100%)", maxHeight: "80vh", display: "flex", flexDirection: "column", padding: 0, overflow: "hidden" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: "flex", alignItems: "center", padding: "14px 20px", borderBottom: "1px solid var(--color-border)" }}>
+                  <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>{expandedContent.label}</span>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 12, padding: "3px 10px", marginRight: 8 }}
+                    onClick={() => copyText(expandedContent.text, "modal")}
+                  >
+                    {copiedId === "modal" ? "Copied!" : "Copy"}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: 12, padding: "3px 10px" }}
+                    onClick={() => setExpandedContent(null)}
+                  >
+                    Close
+                  </button>
+                </div>
+                <pre
+                  style={{
+                    flex: 1, overflowY: "auto", margin: 0,
+                    padding: "16px 20px",
+                    fontSize: 12, lineHeight: 1.6,
+                    whiteSpace: "pre-wrap", wordBreak: "break-word",
+                    color: "var(--color-text)",
+                    background: "var(--color-bg)",
+                    fontFamily: "ui-monospace, monospace",
+                  }}
+                >
+                  {expandedContent.text}
+                </pre>
+              </div>
             </div>
           )}
         </div>

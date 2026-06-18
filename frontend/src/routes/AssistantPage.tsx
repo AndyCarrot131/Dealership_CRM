@@ -39,11 +39,11 @@ function PageShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function AssistantPage() {
-  const [selectedAgent, setSelectedAgent] = useState<AgentKey | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AgentKey | null>("assistant");
   const [selectedCustomer, setSelectedCustomer] = useState<SimpleCustomer | null>(null);
 
   function handleBack() {
-    setSelectedAgent(null);
+    setSelectedAgent("assistant");
     setSelectedCustomer(null);
   }
 
@@ -71,7 +71,13 @@ export default function AssistantPage() {
   if (selectedAgent === "assistant") {
     return (
       <PageShell>
-        <AgentChat mode="page" chatMode="assistant" onClose={handleBack} />
+        <AgentChat
+          mode="page"
+          chatMode="assistant"
+          onClose={handleBack}
+          onSwitchAgent={setSelectedAgent}
+          currentAgent="assistant"
+        />
       </PageShell>
     );
   }
@@ -79,7 +85,13 @@ export default function AssistantPage() {
   if (selectedAgent === "intake") {
     return (
       <PageShell>
-        <AgentChat mode="page" chatMode="intake" onClose={handleBack} />
+        <AgentChat
+          mode="page"
+          chatMode="intake"
+          onClose={handleBack}
+          onSwitchAgent={setSelectedAgent}
+          currentAgent="intake"
+        />
       </PageShell>
     );
   }
@@ -100,6 +112,8 @@ export default function AssistantPage() {
           customerId={selectedCustomer.id}
           customerName={selectedCustomer.full_name}
           onClose={handleBack}
+          onSwitchAgent={setSelectedAgent}
+          currentAgent="update"
         />
       </PageShell>
     );

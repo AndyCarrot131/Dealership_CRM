@@ -7,8 +7,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.contact_log import run_contact_log_parser
 from app.auth.dependencies import get_current_user
 from app.db import get_db
+from app.llm.client import LLMClient, get_llm_client
 from app.models.customer import Customer
 from app.models.interaction import Interaction
 from app.models.user import User
@@ -36,6 +38,17 @@ class InteractionOut(BaseModel):
     created_at: datetime
 
 
+class ContactLogParseRequest(BaseModel):
+    raw_text: str
+
+
+class ContactLogParsePreview(BaseModel):
+    channel: str
+    summary: str
+    contacted_at: Optional[datetime] = None
+    customer_name_hint: str
+
+
 def _normalize_dt(dt: Optional[datetime]) -> datetime:
     if dt is None:
         return datetime.now(timezone.utc)
@@ -55,6 +68,40 @@ def _row_to_dict(r: Interaction) -> dict[str, Any]:
         "contacted_at": r.contacted_at,
         "created_at": r.created_at,
     }
+
+
+@router.post("/parse", response_model=ContactLogParsePreview)
+async def parse_contact_log(
+    body: ContactLogParseRequest,
+    current_user: User = Depends(get_current_user),
+    llm: LLMClient = Depends(get_llm_client),
+) -> ContactLogParsePreview:
+    if not body.raw_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="raw_text must not be empty",
+        )
+    try:
+        result = await run_contact_log_parser(body.raw_text, llm)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"AI service unavailable: {exc}",
+        )
+
+    contacted_at: Optional[datetime] = None
+    if result.get("contacted_at"):
+        try:
+            contacted_at = datetime.fromisoformat(result["contacted_at"])
+        except (ValueError, TypeError):
+            pass
+
+    return ContactLogParsePreview(
+        channel=result["channel"],
+        summary=result["summary"],
+        contacted_at=contacted_at,
+        customer_name_hint=result.get("customer_name_hint", ""),
+    )
 
 
 @router.get("", response_model=list[InteractionOut])

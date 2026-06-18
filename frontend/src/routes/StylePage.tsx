@@ -5,6 +5,7 @@ import { api } from "../api/client";
 interface SampleMessage {
   id: number;
   channel: string;
+  subject?: string | null;
   raw_content: string;
   label: string;
 }
@@ -20,6 +21,14 @@ interface Category {
   name: string;
 }
 
+interface StyleRule {
+  id: number;
+  channel: string;
+  category: string;
+  rule_text: string;
+  active: boolean;
+}
+
 type Channel = "email" | "text";
 
 const CHANNELS: Channel[] = ["email", "text"];
@@ -32,6 +41,7 @@ export default function StylePage() {
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [summarizing, setSummarizing] = useState(false);
   const [summaryMsg, setSummaryMsg] = useState("");
+  const [newSubject, setNewSubject] = useState("");
   const [newContent, setNewContent] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [adding, setAdding] = useState(false);
@@ -42,10 +52,24 @@ export default function StylePage() {
   const [importingCats, setImportingCats] = useState(false);
   const [expandedSamples, setExpandedSamples] = useState<Set<number>>(new Set());
 
+  // Extra rules state
+  const [rules, setRules] = useState<StyleRule[]>([]);
+  const [newRuleChannel, setNewRuleChannel] = useState<string>("email");
+  const [newRuleCategory, setNewRuleCategory] = useState("");
+  const [newRuleText, setNewRuleText] = useState("");
+  const [addingRule, setAddingRule] = useState(false);
+  const [ruleError, setRuleError] = useState("");
+
+  // Profile edit state
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editDraft, setEditDraft] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+
   useEffect(() => {
     fetchCategories();
     fetchSamples();
     fetchProfile();
+    fetchRules();
   }, [activeChannel]);
 
   async function fetchCategories() {
@@ -77,6 +101,77 @@ export default function StylePage() {
       setProfile(data);
     } catch {
       setProfile(null);
+    }
+  }
+
+  async function fetchRules() {
+    try {
+      const data = await api.get<StyleRule[]>("/style/rules");
+      setRules(data);
+    } catch {
+      setRules([]);
+    }
+  }
+
+  async function handleAddRule() {
+    const text = newRuleText.trim();
+    if (!text || addingRule) return;
+    setAddingRule(true);
+    setRuleError("");
+    try {
+      const created = await api.post<StyleRule>("/style/rules", {
+        channel: newRuleChannel,
+        category: newRuleCategory.trim(),
+        rule_text: text,
+      });
+      setRules((prev) => [...prev, created]);
+      setNewRuleText("");
+      setNewRuleCategory("");
+    } catch (e) {
+      setRuleError(e instanceof Error ? e.message : "Failed to add rule");
+    } finally {
+      setAddingRule(false);
+    }
+  }
+
+  async function handleToggleRule(rule: StyleRule) {
+    try {
+      const updated = await api.patch<StyleRule>(`/style/rules/${rule.id}`, {
+        active: !rule.active,
+      });
+      setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to update rule");
+    }
+  }
+
+  async function handleDeleteRule(id: number) {
+    try {
+      await api.delete(`/style/rules/${id}`);
+      setRules((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete rule");
+    }
+  }
+
+  function handleEditProfile() {
+    setEditDraft(profile?.style_md ?? "");
+    setEditingProfile(true);
+  }
+
+  async function handleSaveProfile() {
+    if (savingProfile) return;
+    setSavingProfile(true);
+    try {
+      const updated = await api.patch<StyleProfile>(`/style/profile/${activeChannel}`, {
+        style_md: editDraft,
+      });
+      setProfile(updated);
+      setEditingProfile(false);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to save profile");
+    } finally {
+      setSavingProfile(false);
     }
   }
 
@@ -156,10 +251,12 @@ export default function StylePage() {
     try {
       const created = await api.post<SampleMessage>("/style/samples", {
         channel: activeChannel,
+        subject: activeChannel === "email" ? newSubject.trim() : "",
         raw_content: content,
         label: newLabel,
       });
       setSamples((prev) => [created, ...prev]);
+      setNewSubject("");
       setNewContent("");
       setNewLabel("");
     } catch (e) {
@@ -298,6 +395,136 @@ export default function StylePage() {
             )}
           </div>
 
+          {/* Extra Rules panel */}
+          <div className="card" style={{ padding: 14, marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600, color: "var(--color-primary)" }}>
+              Extra Rules
+            </h3>
+
+            {rules.length === 0 ? (
+              <p style={{ fontSize: 12, color: "var(--color-text-3)", margin: "0 0 10px" }}>
+                No extra rules yet.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                {rules.map((rule) => (
+                  <div
+                    key={rule.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 8,
+                      padding: "7px 10px",
+                      background: rule.active ? "var(--color-bg)" : "var(--color-bg-2)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      opacity: rule.active ? 1 : 0.55,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 3 }}>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: "2px 7px",
+                            borderRadius: 4,
+                            background: rule.channel === "email" ? "#e0f2fe" : rule.channel === "text" ? "#dcfce7" : "#f3e8ff",
+                            color: rule.channel === "email" ? "#0369a1" : rule.channel === "text" ? "#15803d" : "#7e22ce",
+                          }}
+                        >
+                          {rule.channel === "both" ? "Both" : rule.channel === "email" ? "Email" : "Text"}
+                        </span>
+                        {rule.category && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 500,
+                              padding: "2px 7px",
+                              borderRadius: 4,
+                              background: "var(--color-bg-3)",
+                              color: "var(--color-text-3)",
+                            }}
+                          >
+                            {rule.category}
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-2)", wordBreak: "break-word" }}>
+                        {rule.rule_text}
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                      <button
+                        onClick={() => handleToggleRule(rule)}
+                        className={`btn ${rule.active ? "btn-secondary" : "btn-ghost"}`}
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                        title={rule.active ? "Disable rule" : "Enable rule"}
+                      >
+                        {rule.active ? "On" : "Off"}
+                      </button>
+                      <button
+                        onClick={() => handleDeleteRule(rule.id)}
+                        className="btn btn-danger-ghost"
+                        style={{ fontSize: 11, padding: "3px 8px" }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add rule form */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <select
+                  className="select"
+                  value={newRuleChannel}
+                  onChange={(e) => setNewRuleChannel(e.target.value)}
+                  style={{ width: 90, flexShrink: 0 }}
+                >
+                  <option value="email">Email</option>
+                  <option value="text">Text</option>
+                  <option value="both">Both</option>
+                </select>
+                <select
+                  className="select"
+                  value={newRuleCategory}
+                  onChange={(e) => setNewRuleCategory(e.target.value)}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">— No category —</option>
+                  {categories.map((cat) => (
+                    <option key={cat.id} value={cat.name}>{cat.name}</option>
+                  ))}
+                  <option value="Others">Others</option>
+                </select>
+              </div>
+              <textarea
+                className="textarea"
+                placeholder="e.g. Don't generate an email ending, sales name is John Smith…"
+                value={newRuleText}
+                onChange={(e) => setNewRuleText(e.target.value)}
+                rows={2}
+              />
+              <div>
+                <button
+                  onClick={handleAddRule}
+                  disabled={addingRule || !newRuleText.trim()}
+                  className="btn btn-primary"
+                  style={{ fontSize: 13 }}
+                >
+                  {addingRule ? "Adding…" : "Add Rule"}
+                </button>
+              </div>
+              {ruleError && (
+                <p style={{ fontSize: 12, color: "var(--color-danger)", margin: 0 }}>{ruleError}</p>
+              )}
+            </div>
+          </div>
+
           <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 600, color: "var(--color-text)" }}>
             Sample messages ({samples.length})
           </h3>
@@ -314,6 +541,14 @@ export default function StylePage() {
                 <option key={cat.id} value={cat.name}>{cat.name}</option>
               ))}
             </select>
+            {activeChannel === "email" && (
+              <input
+                className="input"
+                placeholder="Subject line…"
+                value={newSubject}
+                onChange={(e) => setNewSubject(e.target.value)}
+              />
+            )}
             <textarea
               className="textarea"
               placeholder={`Paste a sample ${activeChannel} here…`}
@@ -368,6 +603,11 @@ export default function StylePage() {
                       )}
                     </select>
                   </div>
+                  {s.subject && (
+                    <div style={{ fontSize: 12, color: "var(--color-text-3)", marginBottom: 4 }}>
+                      <span style={{ fontWeight: 600 }}>Subject:</span> {s.subject}
+                    </div>
+                  )}
                   <div
                     style={{
                       color: "var(--color-text-2)",
@@ -408,20 +648,47 @@ export default function StylePage() {
             <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, color: "var(--color-text)" }}>
               {activeChannel === "email" ? "Email" : "Text"} Style Profile
             </h3>
-            <button
-              onClick={handleSummarize}
-              disabled={summarizing || samples.length === 0}
-              className="btn btn-primary"
-            >
-              {summarizing ? "Summarizing…" : "Summarize"}
-            </button>
+            {!editingProfile && (
+              <>
+                <button
+                  onClick={handleSummarize}
+                  disabled={summarizing || samples.length === 0}
+                  className="btn btn-primary"
+                >
+                  {summarizing ? "Summarizing…" : "Summarize"}
+                </button>
+                <button
+                  onClick={handleEditProfile}
+                  className="btn btn-secondary"
+                >
+                  Edit
+                </button>
+              </>
+            )}
+            {editingProfile && (
+              <>
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={savingProfile}
+                  className="btn btn-primary"
+                >
+                  {savingProfile ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => setEditingProfile(false)}
+                  className="btn btn-ghost"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
           </div>
-          {categories.length > 0 && (
+          {categories.length > 0 && !editingProfile && (
             <p style={{ fontSize: 12, color: "var(--color-text-3)", marginBottom: 10 }}>
               LLM will produce one section per category that has samples.
             </p>
           )}
-          {summaryMsg && (
+          {summaryMsg && !editingProfile && (
             <p
               style={{
                 fontSize: 12,
@@ -432,13 +699,21 @@ export default function StylePage() {
               {summaryMsg}
             </p>
           )}
-          {profile?.style_md ? (
+          {editingProfile ? (
+            <textarea
+              className="textarea"
+              value={editDraft}
+              onChange={(e) => setEditDraft(e.target.value)}
+              rows={22}
+              style={{ width: "100%", fontFamily: "var(--font-mono, monospace)", fontSize: 13 }}
+            />
+          ) : profile?.style_md ? (
             <div className="card" style={{ padding: "14px 18px", overflowY: "auto", maxHeight: 520 }}>
               <MarkdownView md={profile.style_md} />
             </div>
           ) : (
             <p style={{ color: "var(--color-text-3)", fontSize: 13 }}>
-              No style profile yet. Add samples and click Summarize.
+              No style profile yet. Add samples and click Summarize, or click Edit to write one manually.
             </p>
           )}
         </div>

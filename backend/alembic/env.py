@@ -13,8 +13,10 @@ from app.db import Base
 from app.models import (  # noqa: F401
     app_setting,
     customer,
+    deal,
     interaction,
     inventory,
+    llm_profile,
     outreach,
     style,
     user,

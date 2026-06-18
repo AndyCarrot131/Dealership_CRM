@@ -10,13 +10,14 @@ that faithfully match this person's voice and style.
 
 {category_instruction}
 
-Each category section MUST contain exactly two sub-sections:
+Each category section MUST contain exactly {subsection_count} sub-sections:{subject_line_section}
 
 ### Format
 Describe the structural/layout conventions observed in the samples:
-- Message length (e.g. 2-3 short paragraphs, under 80 words)
+- Message length (give realistic ranges; avoid strict limits unless samples consistently enforce them)
 - Opening line pattern (greeting style, whether name is used)
 - Body structure (e.g. one hook sentence → offer → CTA)
+- Add a "Paragraph plan" list that explains what each paragraph should cover (P1, P2, P3...) and a suggested word range per paragraph
 - Closing line pattern (sign-off, signature style)
 - Paragraph count and spacing habits
 - Use of bullet points, line breaks, or lists
@@ -29,8 +30,31 @@ Describe the voice and language patterns:
 - How they reference vehicles (make/model/year/trim usage)
 - Use of emojis, punctuation quirks, or capitalisation habits
 - Anything that makes this person's writing instantly recognisable
+- If the closing/signature phrase is consistent, capture the exact required wording verbatim in quotes
 
+After those required sub-sections, add a short "### Operational Rules" section for each category with:
+- Goal (what the email is trying to achieve for this category)
+- Personalization fields to include (e.g. [FirstName], [Year Model], relevant date, [Phone])
+- CTA standard (one primary action at the end)
+- Language guardrails (non-pushy phrasing, no overpromising, no fabricated offers)
+- A 4-6 item quality checklist for before-send review
+- For lease/finance ending categories, if samples use a named options block, explicitly define the required heading and option-label format (e.g., "Option 1/2/3")
+
+Prefer specific, reusable rules over abstract advice.
+Word-count guidance should be presented as suggestions, not hard constraints.
 Output a clean markdown document. Do NOT include any samples verbatim."""
+
+_SUBJECT_LINE_SECTION = """
+
+### Subject Line
+Describe the subject line patterns observed across the samples:
+- Typical length (capture what works in practice; for email this is often around 4-9 words)
+- Tone and urgency (e.g. friendly teaser, direct offer, question)
+- Use of personalisation (customer name, vehicle details)
+- Common openers or formulas (e.g. "Your [Year] [Model] is ready", "Quick update on…")
+- Capitalisation style (title case, sentence case, all-lower)
+- Use of numbers, emojis, or special characters
+- Anything that makes the subject line pattern recognisable"""
 
 _CATEGORY_INSTRUCTION_DEFAULT = """The samples are grouped by condition (e.g. "Leasing Ending", "Test Drive"). Produce a ## section
 for each condition. If there is a "General" group, produce it first as "## General"."""
@@ -74,7 +98,18 @@ async def run_style_summarizer(
         ordered_keys = list(groups.keys())
         category_instruction = _CATEGORY_INSTRUCTION_DEFAULT
 
-    system_prompt = _SYSTEM_BASE.format(category_instruction=category_instruction)
+    if channel == "email":
+        subsection_count = "three"
+        subject_line_section = _SUBJECT_LINE_SECTION
+    else:
+        subsection_count = "two"
+        subject_line_section = ""
+
+    system_prompt = _SYSTEM_BASE.format(
+        category_instruction=category_instruction,
+        subsection_count=subsection_count,
+        subject_line_section=subject_line_section,
+    )
 
     sections: list[str] = []
     for key in ordered_keys:

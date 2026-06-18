@@ -10,23 +10,26 @@ import {
   StylePanel,
   RulePanel,
   EmailPanel,
+  PreVisitPanel,
 } from "./components/AgentPanels";
 import NavBar from "./components/NavBar";
 import LoginPage from "./routes/LoginPage";
 import CustomersPage from "./routes/CustomersPage";
 import ContactsPage from "./routes/ContactsPage";
+import DealsPage from "./routes/DealsPage";
 import AssistantPage from "./routes/AssistantPage";
 import InventoryPage from "./routes/InventoryPage";
 import StylePage from "./routes/StylePage";
 import OutreachPage from "./routes/OutreachPage";
 import InboxPage from "./routes/InboxPage";
 import SettingsPage from "./routes/SettingsPage";
+import SupportInfoPage from "./routes/SupportInfoPage";
 
 function ProtectedLayout() {
   const { token, mustChangePassword } = useAuth();
   const location = useLocation();
   const [showChat, setShowChat] = useState(false);
-  const [sidebarAgent, setSidebarAgent] = useState<AgentKey | null>(null);
+  const [sidebarAgent, setSidebarAgent] = useState<AgentKey | null>("assistant");
   const [sidebarCustomer, setSidebarCustomer] = useState<SimpleCustomer | null>(null);
 
   if (!token) return <Navigate to="/login" replace />;
@@ -35,13 +38,13 @@ function ProtectedLayout() {
   const onSettingsPage = location.pathname === "/settings";
 
   function handleSidebarBack() {
-    setSidebarAgent(null);
+    setSidebarAgent("assistant");
     setSidebarCustomer(null);
   }
 
   function handleSidebarClose() {
     setShowChat(false);
-    setSidebarAgent(null);
+    setSidebarAgent("assistant");
     setSidebarCustomer(null);
   }
 
@@ -81,11 +84,23 @@ function ProtectedLayout() {
           )}
 
           {sidebarAgent === "assistant" && (
-            <AgentChat mode="page" chatMode="assistant" onClose={handleSidebarBack} />
+            <AgentChat
+              mode="page"
+              chatMode="assistant"
+              onClose={handleSidebarClose}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="assistant"
+            />
           )}
 
           {sidebarAgent === "intake" && (
-            <AgentChat mode="page" chatMode="intake" onClose={handleSidebarBack} />
+            <AgentChat
+              mode="page"
+              chatMode="intake"
+              onClose={handleSidebarClose}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="intake"
+            />
           )}
 
           {sidebarAgent === "update" && !sidebarCustomer && (
@@ -102,7 +117,9 @@ function ProtectedLayout() {
               chatMode="update"
               customerId={sidebarCustomer.id}
               customerName={sidebarCustomer.full_name}
-              onClose={handleSidebarBack}
+              onClose={handleSidebarClose}
+              onSwitchAgent={setSidebarAgent}
+              currentAgent="update"
             />
           )}
 
@@ -116,6 +133,22 @@ function ProtectedLayout() {
 
           {sidebarAgent === "email" && (
             <EmailPanel onBack={handleSidebarBack} onClose={handleSidebarClose} />
+          )}
+
+          {sidebarAgent === "pre_visit" && !sidebarCustomer && (
+            <CustomerSearch
+              onSelect={setSidebarCustomer}
+              onBack={handleSidebarBack}
+              onClose={handleSidebarClose}
+            />
+          )}
+
+          {sidebarAgent === "pre_visit" && sidebarCustomer && (
+            <PreVisitPanel
+              customer={sidebarCustomer}
+              onBack={handleSidebarBack}
+              onClose={handleSidebarClose}
+            />
           )}
         </div>
       </div>
@@ -137,12 +170,14 @@ export default function App() {
         <Route element={<ProtectedLayout />}>
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/contacts" element={<ContactsPage />} />
+          <Route path="/deals" element={<DealsPage />} />
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/inventory" element={<InventoryPage />} />
           <Route path="/style" element={<StylePage />} />
           <Route path="/outreach" element={<OutreachPage />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/support-info" element={<SupportInfoPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/customers" replace />} />
       </Routes>

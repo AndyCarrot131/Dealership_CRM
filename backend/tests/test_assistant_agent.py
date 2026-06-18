@@ -2,6 +2,13 @@
 import json
 
 from app.agents.assistant import _execute_tool_call, _UserContext, run_assistant
+from app.agents.email_composer import (
+    _enforce_lease_body_depth,
+    _enforce_lease_cta,
+    _enforce_lease_options_structure,
+    _enforce_lease_subject,
+    _extract_style_signoff,
+)
 from app.services.sql_tool import build_scoped_sql
 from app.llm.client import get_llm_client
 from app.main import app
@@ -215,3 +222,76 @@ async def test_chat_endpoint_assistant_mode(client, sales_user):
     assert body["intent"] == "assistant"
     assert body["reply"] == "There are 0 customers."
     assert body["pending_fields"] is None
+
+
+def test_extract_style_signoff_reads_always_ends_with_rule():
+    style_md = """
+## Lease Expiration
+### Style
+**Signature**: Always ends with "Warm regards, Wilson Xing | Sales Consultant"
+"""
+    signoff = _extract_style_signoff(style_md)
+    assert signoff == "Warm regards, Wilson Xing | Sales Consultant"
+
+
+def test_enforce_lease_options_structure_injects_standard_three_options():
+    body = """Hi Brianna,
+
+I hope this email finds you well.
+"""
+    customer = {
+        "full_name": "Brianna Algee",
+        "cars": [{"year": 2022, "make": "VW", "model": "Tiguan"}],
+    }
+    normalized = _enforce_lease_options_structure(body, customer, enabled=True)
+    assert "Your End-of-Lease Options:" in normalized
+    assert "Option 1:" in normalized
+    assert "Option 2:" in normalized
+    assert "Option 3:" in normalized
+    assert "residual value listed in your contract" in normalized
+
+
+def test_enforce_lease_options_structure_can_use_bullets():
+    body = "Hi Brianna,\n\nI hope this email finds you well."
+    customer = {
+        "full_name": "Brianna Algee",
+        "cars": [{"year": 2022, "make": "VOLKSWAGEN", "model": "TIGUAN"}],
+    }
+    normalized = _enforce_lease_options_structure(
+        body, customer, enabled=True, options_format="bulleted"
+    )
+    assert "Your End-of-Lease Options:" in normalized
+    assert "• Upgrade to a new model" in normalized
+
+
+def test_enforce_lease_subject_uses_name_vehicle_and_date():
+    customer = {
+        "full_name": "Brianna Algee",
+        "cars": [{"year": 2022, "make": "VW", "model": "Tiguan", "lease_end_date": "2026-09-16"}],
+    }
+    subject = _enforce_lease_subject("Anything", customer, enabled=True)
+    assert subject == "Brianna, Your 2022 VW Tiguan Lease Options"
+
+
+def test_enforce_lease_cta_appends_standard_phrase():
+    customer = {"phone": "(902) 225-9368"}
+    body = "We are here to help with your next steps."
+    updated = _enforce_lease_cta(body, customer, enabled=True)
+    assert "Please reply directly to this email or call us at (902) 225-9368" in updated
+
+
+def test_enforce_lease_body_depth_adds_required_sections():
+    customer = {
+        "full_name": "Brianna Algee",
+        "cars": [{"year": 2022, "make": "VW", "model": "Tiguan", "lease_end_date": "2026-09-16"}],
+    }
+    short_body = "We are here to help."
+    updated = _enforce_lease_body_depth(
+        short_body, customer, enabled=True, options_format="bulleted"
+    )
+    assert "Hi Brianna," in updated
+    assert "Can you believe how quickly time flies?" in updated
+    assert "Let's Find the Best Path Forward" in updated
+    assert "Your End-of-Lease Options:" in updated
+    assert "• Upgrade to a new model" in updated
+    assert "Thank you so much for being a valued part of the O'Regan's VW family." in updated

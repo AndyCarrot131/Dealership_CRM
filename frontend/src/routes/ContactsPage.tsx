@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState, useMemo } from "react";
 import { api } from "../api/client";
 
 interface Interaction {
@@ -21,6 +21,52 @@ const CHANNELS: { value: string; label: string; color: string; bg: string }[] = 
   { value: "email", label: "Email", color: "#ea580c", bg: "#ffedd5" },
   { value: "in-person", label: "In-Person", color: "#7c3aed", bg: "#ede9fe" },
 ];
+
+function SummaryCell({
+  interaction,
+  expandedSummaries,
+  toggle,
+}: {
+  interaction: Interaction;
+  expandedSummaries: Set<number>;
+  toggle: (id: number) => void;
+}) {
+  const expanded = expandedSummaries.has(interaction.id);
+  const long = interaction.summary.length > 100;
+  return (
+    <td style={{ padding: "8px 12px", color: "#444", maxWidth: 420 }}>
+      <div
+        style={
+          expanded
+            ? undefined
+            : {
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }
+        }
+      >
+        {interaction.summary}
+      </div>
+      {long && (
+        <button
+          onClick={() => toggle(interaction.id)}
+          style={{
+            background: "none",
+            border: "none",
+            color: "#2563eb",
+            cursor: "pointer",
+            fontSize: 11,
+            padding: "2px 0 0",
+          }}
+        >
+          {expanded ? "Show less" : "Show more"}
+        </button>
+      )}
+    </td>
+  );
+}
 
 function ChannelBadge({ channel }: { channel: string }) {
   const ch = CHANNELS.find((c) => c.value === channel) ?? { label: channel, color: "#666", bg: "#e5e7eb" };
@@ -48,8 +94,26 @@ interface LogForm {
   contacted_at: string;
 }
 
+interface ParsePreview {
+  channel: string;
+  summary: string;
+  contacted_at: string | null;
+  customer_name_hint: string;
+}
+
+type ParseStep = "idle" | "input" | "parsing" | "review" | "saving";
+
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const EMPTY_FORM: LogForm = { customer_id: "", channel: "call", summary: "", contacted_at: todayISO() };
+
+function fuzzyMatchCustomer(hint: string, customers: Customer[]): string {
+  if (!hint.trim()) return "";
+  const h = hint.toLowerCase();
+  const exact = customers.find((c) => c.full_name.toLowerCase() === h);
+  if (exact) return String(exact.id);
+  const partial = customers.find((c) => c.full_name.toLowerCase().includes(h) || h.includes(c.full_name.toLowerCase()));
+  return partial ? String(partial.id) : "";
+}
 
 export default function ContactsPage() {
   const [interactions, setInteractions] = useState<Interaction[]>([]);
@@ -62,8 +126,17 @@ export default function ContactsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // Parse from Thread state
+  const [parseStep, setParseStep] = useState<ParseStep>("idle");
+  const [rawText, setRawText] = useState("");
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [reviewForm, setReviewForm] = useState<LogForm>(EMPTY_FORM);
+
   const [search, setSearch] = useState("");
   const [channelFilter, setChannelFilter] = useState("");
+
+  const [expandedCustomers, setExpandedCustomers] = useState<Set<number>>(new Set());
+  const [expandedSummaries, setExpandedSummaries] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     Promise.all([
@@ -99,6 +172,48 @@ export default function ContactsPage() {
     }
   }
 
+  async function handleParse() {
+    if (!rawText.trim()) return;
+    setParseError(null);
+    setParseStep("parsing");
+    try {
+      const preview = await api.post<ParsePreview>("/interactions/parse", { raw_text: rawText });
+      const dateStr = preview.contacted_at
+        ? new Date(preview.contacted_at).toISOString().slice(0, 10)
+        : todayISO();
+      setReviewForm({
+        customer_id: fuzzyMatchCustomer(preview.customer_name_hint, customers),
+        channel: preview.channel,
+        summary: preview.summary,
+        contacted_at: dateStr,
+      });
+      setParseStep("review");
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Failed to parse");
+      setParseStep("input");
+    }
+  }
+
+  async function handleConfirmLog(e: React.FormEvent) {
+    e.preventDefault();
+    setParseError(null);
+    setParseStep("saving");
+    try {
+      const created = await api.post<Interaction>("/interactions", {
+        customer_id: Number(reviewForm.customer_id),
+        channel: reviewForm.channel,
+        summary: reviewForm.summary,
+        contacted_at: reviewForm.contacted_at ? `${reviewForm.contacted_at}T12:00:00` : undefined,
+      });
+      setInteractions((prev) => [created, ...prev]);
+      setParseStep("idle");
+      setRawText("");
+    } catch (e) {
+      setParseError(e instanceof Error ? e.message : "Failed to save");
+      setParseStep("review");
+    }
+  }
+
   async function handleDelete(id: number) {
     if (!confirm("Delete this contact log?")) return;
     try {
@@ -116,6 +231,25 @@ export default function ContactsPage() {
     return true;
   });
 
+  const groups = useMemo(() => {
+    const map = new Map<number, { customer_id: number; customer_name: string; interactions: Interaction[] }>();
+    for (const i of visible) {
+      if (!map.has(i.customer_id)) {
+        map.set(i.customer_id, { customer_id: i.customer_id, customer_name: i.customer_name, interactions: [] });
+      }
+      map.get(i.customer_id)!.interactions.push(i);
+    }
+    return Array.from(map.values());
+  }, [visible]);
+
+  function toggleSummary(id: number) {
+    setExpandedSummaries((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
   const cell: React.CSSProperties = { padding: "8px 12px" };
   const inputStyle: React.CSSProperties = {
     padding: "7px 10px",
@@ -132,10 +266,183 @@ export default function ContactsPage() {
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <h1 style={{ margin: 0 }}>Contact Log</h1>
-          <button onClick={() => { setShowForm(!showForm); setFormError(null); }}>
-            {showForm ? "Cancel" : "+ Log Contact"}
-          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => {
+                if (parseStep !== "idle") {
+                  setParseStep("idle");
+                  setParseError(null);
+                } else {
+                  setParseStep("input");
+                  setShowForm(false);
+                }
+              }}
+              style={{ background: parseStep !== "idle" ? "#f3f4f6" : undefined }}
+            >
+              {parseStep !== "idle" ? "Cancel Parse" : "✦ Parse from Thread"}
+            </button>
+            <button onClick={() => { setShowForm(!showForm); setFormError(null); setParseStep("idle"); }}>
+              {showForm ? "Cancel" : "+ Log Contact"}
+            </button>
+          </div>
         </div>
+
+        {parseStep === "input" && (
+          <div
+            style={{
+              background: "#fdf4ff",
+              border: "1px solid #d8b4fe",
+              padding: 20,
+              borderRadius: 10,
+              marginBottom: 24,
+            }}
+          >
+            <h3 style={{ margin: "0 0 4px", fontSize: 15, color: "#6b21a8" }}>✦ Parse from Thread</h3>
+            <p style={{ margin: "0 0 12px", fontSize: 13, color: "#888" }}>
+              Paste an email chain, SMS record, or call notes — AI will extract the channel, date, and summary.
+            </p>
+            <textarea
+              style={{
+                width: "100%",
+                minHeight: 160,
+                padding: "8px 10px",
+                fontSize: 13,
+                borderRadius: 6,
+                border: "1px solid #d1d5db",
+                boxSizing: "border-box",
+                fontFamily: "inherit",
+                resize: "vertical",
+              }}
+              placeholder="Paste email thread, SMS record, or call notes here…"
+              value={rawText}
+              onChange={(e) => setRawText(e.target.value)}
+            />
+            {parseError && <p style={{ color: "red", fontSize: 13, margin: "8px 0 0" }}>{parseError}</p>}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <button onClick={handleParse} disabled={!rawText.trim()} style={{ minWidth: 100 }}>
+                Parse
+              </button>
+            </div>
+          </div>
+        )}
+
+        {parseStep === "parsing" && (
+          <div
+            style={{
+              background: "#fdf4ff",
+              border: "1px solid #d8b4fe",
+              padding: 20,
+              borderRadius: 10,
+              marginBottom: 24,
+              color: "#6b21a8",
+              fontSize: 13,
+            }}
+          >
+            Parsing conversation…
+          </div>
+        )}
+
+        {(parseStep === "review" || parseStep === "saving") && (
+          <form
+            onSubmit={handleConfirmLog}
+            style={{
+              background: "#fdf4ff",
+              border: "1px solid #d8b4fe",
+              padding: 20,
+              borderRadius: 10,
+              marginBottom: 24,
+              display: "grid",
+              gridTemplateColumns: "1fr 1fr",
+              gap: 16,
+            }}
+          >
+            <h3 style={{ margin: 0, gridColumn: "1 / -1", fontSize: 15, color: "#6b21a8" }}>
+              ✦ Review AI-Parsed Log
+              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: "#a855f7", background: "#f3e8ff", padding: "2px 8px", borderRadius: 8 }}>
+                AI-suggested
+              </span>
+            </h3>
+
+            <div>
+              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 5 }}>Customer *</label>
+              <select
+                style={{ padding: "7px 10px", fontSize: 14, borderRadius: 6, border: "1px solid #d1d5db", width: "100%", boxSizing: "border-box" }}
+                value={reviewForm.customer_id}
+                onChange={(e) => setReviewForm({ ...reviewForm, customer_id: e.target.value })}
+                required
+              >
+                <option value="">Select customer…</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.full_name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 5 }}>Date</label>
+              <input
+                type="date"
+                style={{ padding: "7px 10px", fontSize: 14, borderRadius: 6, border: "1px solid #d1d5db", width: "100%", boxSizing: "border-box" }}
+                value={reviewForm.contacted_at}
+                onChange={(e) => setReviewForm({ ...reviewForm, contacted_at: e.target.value })}
+              />
+            </div>
+
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 5 }}>Channel *</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {CHANNELS.map((ch) => (
+                  <button
+                    key={ch.value}
+                    type="button"
+                    onClick={() => setReviewForm({ ...reviewForm, channel: ch.value })}
+                    style={{
+                      flex: 1,
+                      padding: "8px 4px",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      border: reviewForm.channel === ch.value ? `2px solid ${ch.color}` : "1px solid #d1d5db",
+                      color: reviewForm.channel === ch.value ? ch.color : "#555",
+                      background: reviewForm.channel === ch.value ? ch.bg : "#fff",
+                    }}
+                  >
+                    {ch.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label style={{ fontSize: 12, color: "#666", display: "block", marginBottom: 5 }}>Summary *</label>
+              <textarea
+                style={{ padding: "7px 10px", fontSize: 14, borderRadius: 6, border: "1px solid #d1d5db", width: "100%", boxSizing: "border-box", resize: "vertical", minHeight: 80, fontFamily: "inherit" }}
+                value={reviewForm.summary}
+                onChange={(e) => setReviewForm({ ...reviewForm, summary: e.target.value })}
+                rows={3}
+                required
+              />
+            </div>
+
+            {parseError && (
+              <p style={{ color: "red", margin: 0, fontSize: 13, gridColumn: "1 / -1" }}>{parseError}</p>
+            )}
+
+            <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={() => { setParseStep("input"); setParseError(null); }}
+                style={{ background: "none", border: "1px solid #ccc", borderRadius: 6, padding: "6px 16px", cursor: "pointer", fontSize: 13 }}
+              >
+                ← Back
+              </button>
+              <button type="submit" disabled={parseStep === "saving"} style={{ minWidth: 120 }}>
+                {parseStep === "saving" ? "Saving…" : "Confirm & Save"}
+              </button>
+            </div>
+          </form>
+        )}
 
         {showForm && (
           <form
@@ -247,7 +554,7 @@ export default function ContactsPage() {
             ))}
           </select>
           {(search || channelFilter) && (
-            <span style={{ fontSize: 13, color: "#888" }}>{visible.length} of {interactions.length}</span>
+            <span style={{ fontSize: 13, color: "#888" }}>{groups.length} customers, {visible.length} of {interactions.length} logs</span>
           )}
         </div>
 
@@ -260,7 +567,7 @@ export default function ContactsPage() {
           <p style={{ color: "#888" }}>No results match your filters.</p>
         )}
 
-        {visible.length > 0 && (
+        {groups.length > 0 && (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
             <thead>
               <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left", color: "#555" }}>
@@ -272,26 +579,71 @@ export default function ContactsPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((i) => (
-                <tr key={i.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                  <td style={{ ...cell, color: "#666", whiteSpace: "nowrap" }}>
-                    {new Date(i.contacted_at).toLocaleDateString()}
-                  </td>
-                  <td style={cell}>
-                    <ChannelBadge channel={i.channel} />
-                  </td>
-                  <td style={{ ...cell, fontWeight: 500 }}>{i.customer_name}</td>
-                  <td style={{ ...cell, color: "#444" }}>{i.summary}</td>
-                  <td style={cell}>
-                    <button
-                      onClick={() => handleDelete(i.id)}
-                      style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
-                    >
-                      Delete
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {groups.map((group) => {
+                const [latest, ...rest] = group.interactions;
+                const isOpen = expandedCustomers.has(group.customer_id);
+                const hasMore = rest.length > 0;
+
+                function toggleGroup() {
+                  setExpandedCustomers((prev) => {
+                    const next = new Set(prev);
+                    next.has(group.customer_id) ? next.delete(group.customer_id) : next.add(group.customer_id);
+                    return next;
+                  });
+                }
+
+                return (
+                  <React.Fragment key={group.customer_id}>
+                    <tr style={{ borderBottom: isOpen ? "none" : "1px solid #f0f0f0" }}>
+                      <td style={{ ...cell, color: "#666", whiteSpace: "nowrap" }}>
+                        <span
+                          onClick={hasMore ? toggleGroup : undefined}
+                          style={{ cursor: hasMore ? "pointer" : "default", userSelect: "none", marginRight: 6, display: "inline-block", width: 12 }}
+                        >
+                          {hasMore ? (isOpen ? "▾" : "▸") : ""}
+                        </span>
+                        {new Date(latest.contacted_at).toLocaleDateString()}
+                      </td>
+                      <td style={cell}><ChannelBadge channel={latest.channel} /></td>
+                      <td style={{ ...cell, fontWeight: 500 }}>
+                        {group.customer_name}
+                        {hasMore && !isOpen && (
+                          <span style={{ fontSize: 11, color: "#888", fontWeight: 400, marginLeft: 6 }}>
+                            +{rest.length} more
+                          </span>
+                        )}
+                      </td>
+                      <SummaryCell interaction={latest} expandedSummaries={expandedSummaries} toggle={toggleSummary} />
+                      <td style={cell}>
+                        <button
+                          onClick={() => handleDelete(latest.id)}
+                          style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                    {isOpen && rest.map((i, idx) => (
+                      <tr key={i.id} style={{ borderBottom: idx === rest.length - 1 ? "1px solid #f0f0f0" : "none", background: "#fafafa" }}>
+                        <td style={{ ...cell, color: "#888", whiteSpace: "nowrap", paddingLeft: 28 }}>
+                          {new Date(i.contacted_at).toLocaleDateString()}
+                        </td>
+                        <td style={cell}><ChannelBadge channel={i.channel} /></td>
+                        <td style={cell} />
+                        <SummaryCell interaction={i} expandedSummaries={expandedSummaries} toggle={toggleSummary} />
+                        <td style={cell}>
+                          <button
+                            onClick={() => handleDelete(i.id)}
+                            style={{ background: "none", border: "none", color: "#dc2626", cursor: "pointer", fontSize: 12, padding: 0 }}
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         )}

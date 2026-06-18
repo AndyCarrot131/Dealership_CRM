@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
 interface CustomerCar {
@@ -70,6 +70,226 @@ function toCarForm(car: CustomerCar): CarFormState {
     lease_end_date: car.lease_end_date ?? "",
     is_primary: car.is_primary,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Briefing types + components
+// ---------------------------------------------------------------------------
+
+interface BriefingSection {
+  doc_id: string;
+  category: string;
+  title: string;
+  triggered: boolean;
+  alert: string;
+  suggestion: string;
+}
+
+interface BriefingResult {
+  customer_name: string;
+  generated_at: string;
+  triggered_count: number;
+  sections: BriefingSection[];
+  summary: string;
+}
+
+const CATEGORY_ICONS: Record<string, string> = {
+  trim_alert: "⚠️",
+  competitor: "🏁",
+  incentive: "💰",
+  rate: "📊",
+  inventory: "🚗",
+  lease: "📋",
+};
+
+function categoryIcon(cat: string): string {
+  return CATEGORY_ICONS[cat.toLowerCase()] ?? "📌";
+}
+
+function BriefingCard({
+  result,
+  onRegenerate,
+  loading,
+}: {
+  result: BriefingResult;
+  onRegenerate: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {result.sections.length === 0 ? (
+        <div
+          style={{
+            padding: "24px 16px",
+            textAlign: "center",
+            color: "var(--color-text-3)",
+            background: "var(--color-bg)",
+            borderRadius: "var(--radius-md)",
+            fontSize: 13,
+          }}
+        >
+          No alerts triggered for this customer based on current support docs.
+        </div>
+      ) : (
+        result.sections.map((sec) => (
+          <div
+            key={sec.doc_id}
+            style={{
+              background: "var(--color-bg)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "var(--radius-md)",
+              padding: "14px 16px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                fontWeight: 700,
+                fontSize: 13,
+                color: "var(--color-text)",
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              <span style={{ fontSize: 16 }}>{categoryIcon(sec.category)}</span>
+              {sec.title}
+            </div>
+            <p style={{ margin: 0, fontSize: 13, color: "var(--color-text-2)", lineHeight: 1.6 }}>
+              {sec.alert}
+            </p>
+            {sec.suggestion && (
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 12,
+                  color: "var(--color-primary)",
+                  fontWeight: 500,
+                  lineHeight: 1.5,
+                }}
+              >
+                → {sec.suggestion}
+              </p>
+            )}
+          </div>
+        ))
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          paddingTop: 4,
+        }}
+      >
+        <span style={{ fontSize: 11, color: "var(--color-text-4)" }}>
+          Generated {result.generated_at}
+        </span>
+        <button onClick={onRegenerate} disabled={loading} className="btn btn-secondary" style={{ fontSize: 12 }}>
+          {loading ? "Regenerating…" : "Regenerate"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function BriefingModal({
+  customer,
+  onClose,
+}: {
+  customer: Customer;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<BriefingResult | null>(null);
+  const abortRef = useRef(false);
+
+  async function generate() {
+    setLoading(true);
+    setError(null);
+    abortRef.current = false;
+    try {
+      const data = await api.post<BriefingResult>(`/customers/${customer.id}/briefing`, {});
+      if (!abortRef.current) setResult(data);
+    } catch (err) {
+      if (!abortRef.current)
+        setError(err instanceof Error ? err.message : "Briefing generation failed");
+    } finally {
+      if (!abortRef.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    generate();
+    return () => {
+      abortRef.current = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div onClick={onClose} className="modal-overlay">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="modal-panel"
+        style={{ width: 580, maxHeight: "80vh", display: "flex", flexDirection: "column" }}
+      >
+        <div className="modal-header">
+          <div>
+            <h2>AI Sales Briefing</h2>
+            <span style={{ fontSize: 13, color: "var(--color-text-3)", fontWeight: 400 }}>
+              {customer.full_name}
+            </span>
+          </div>
+          <button onClick={onClose} className="modal-close">
+            ×
+          </button>
+        </div>
+
+        <div
+          className="modal-body"
+          style={{ flex: 1, overflowY: "auto", minHeight: 0 }}
+        >
+          {loading && !result && (
+            <div
+              style={{
+                padding: "48px 16px",
+                textAlign: "center",
+                color: "var(--color-text-3)",
+                fontSize: 13,
+              }}
+            >
+              <div style={{ marginBottom: 8, fontSize: 24 }}>✦</div>
+              Generating briefing — running checks against support docs…
+            </div>
+          )}
+
+          {error && (
+            <div className="notice notice-danger" style={{ padding: "10px 14px", fontSize: 13 }}>
+              {error}
+              <button
+                onClick={generate}
+                className="btn btn-secondary"
+                style={{ marginLeft: 12, fontSize: 12 }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {result && (
+            <BriefingCard result={result} onRegenerate={generate} loading={loading} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function NoteModal({ name, note, onClose }: { name: string; note: string; onClose: () => void }) {
@@ -482,6 +702,7 @@ export default function CustomersPage() {
 
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [noteCustomer, setNoteCustomer] = useState<Customer | null>(null);
+  const [briefingCustomer, setBriefingCustomer] = useState<Customer | null>(null);
   const [search, setSearch] = useState("");
 
   async function fetchCustomers() {
@@ -542,6 +763,12 @@ export default function CustomersPage() {
     <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, overflowY: "auto" }}>
         <div className="page">
+          {briefingCustomer && (
+            <BriefingModal
+              customer={briefingCustomer}
+              onClose={() => setBriefingCustomer(null)}
+            />
+          )}
           {noteCustomer?.note && (
             <NoteModal
               name={noteCustomer.full_name}
@@ -712,6 +939,14 @@ export default function CustomersPage() {
                     <td style={{ whiteSpace: "nowrap" }}>
                       <button onClick={() => setEditingCustomer(c)} className="btn btn-ghost" style={{ fontSize: 12 }}>
                         Edit
+                      </button>
+                      <button
+                        onClick={() => setBriefingCustomer(c)}
+                        className="btn btn-ghost"
+                        style={{ fontSize: 12, color: "var(--color-primary)" }}
+                        title="Generate AI sales briefing"
+                      >
+                        ✦ Briefing
                       </button>
                       {c.note && (
                         <button

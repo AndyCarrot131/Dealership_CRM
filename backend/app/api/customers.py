@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -7,8 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.agents.briefing import run_briefing
 from app.auth.dependencies import get_current_user
 from app.db import get_db
+from app.llm.client import LLMClient, get_llm_client
 from app.models.customer import Customer, CustomerCar
 from app.models.user import User
 
@@ -228,3 +230,25 @@ async def delete_car(
     await db.commit()
     await db.refresh(customer, ["cars"])
     return customer
+
+
+@router.post("/{customer_id}/briefing")
+async def generate_briefing(
+    customer_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    llm: LLMClient = Depends(get_llm_client),
+) -> Any:
+    """Generate a pre-appointment AI briefing for the given customer."""
+    # Ownership check — reuse existing helper
+    await _get_authorized_customer(customer_id, current_user, db)
+    try:
+        result = await run_briefing(customer_id, db, llm)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"AI service unavailable: {exc}",
+        )
+    return result

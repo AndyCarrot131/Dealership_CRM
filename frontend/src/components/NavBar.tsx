@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { to: "/style", label: "Style" },
   { to: "/outreach", label: "Outreach" },
   { to: "/inbox", label: "Inbox" },
+  { to: "/support-info", label: "Support Info" },
   { to: "/assistant", label: "✦ Assistant" },
   { to: "/settings", label: "Settings" },
 ];

@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 
-export type AgentKey = "assistant" | "intake" | "update" | "style" | "rule" | "email";
+export type AgentKey = "assistant" | "intake" | "update" | "style" | "rule" | "email" | "pre_visit";
 
 export interface SimpleCustomer {
   id: number;
@@ -26,12 +26,13 @@ interface RunResult {
 }
 
 export const AGENTS: { key: AgentKey; icon: string; title: string; desc: string }[] = [
-  { key: "assistant", icon: "💬", title: "Ask Anything", desc: "Ask questions about your customers, cars, inventory and outreach — I'll look it up." },
-  { key: "intake", icon: "＋", title: "Add Customer",  desc: "Describe a new customer in plain English and I'll create the record." },
-  { key: "update", icon: "✎",  title: "Edit Customer", desc: "Find a customer and tell me what changed — I'll update the record." },
-  { key: "style",  icon: "✦",  title: "Analyze Style", desc: "Regenerate your writing style guide from saved sample messages." },
-  { key: "rule",   icon: "⚙",  title: "Outreach Rule", desc: "Describe a rule in plain English — I'll parse and save it." },
-  { key: "email",  icon: "✉",  title: "Draft Emails",  desc: "Pick an outreach rule and generate personalised email drafts." },
+  { key: "assistant", icon: "💬", title: "Ask Anything",    desc: "Ask questions about your customers, cars, inventory and outreach — I'll look it up." },
+  { key: "intake",    icon: "＋", title: "Add Customer",    desc: "Describe a new customer in plain English and I'll create the record." },
+  { key: "update",    icon: "✎",  title: "Edit Customer",   desc: "Find a customer and tell me what changed — I'll update the record." },
+  { key: "pre_visit", icon: "📋", title: "Pre-Visit Brief", desc: "Pick a customer and get an AI briefing with alerts and talking points before their appointment." },
+  { key: "style",     icon: "✦",  title: "Analyze Style",   desc: "Regenerate your writing style guide from saved sample messages." },
+  { key: "rule",      icon: "⚙",  title: "Outreach Rule",   desc: "Describe a rule in plain English — I'll parse and save it." },
+  { key: "email",     icon: "✉",  title: "Draft Emails",    desc: "Pick an outreach rule and generate personalised email drafts." },
 ];
 
 // ─── Panel header (used by all one-shot panels + customer search) ──────────────
@@ -722,6 +723,198 @@ export function EmailPanel({
             );
           })}
         </div>
+      </div>
+    </>
+  );
+}
+
+// ─── Pre-Visit Brief panel ─────────────────────────────────────────────────────
+
+interface BriefingSection {
+  doc_id: string;
+  category: string;
+  title: string;
+  triggered: boolean;
+  alert: string;
+  suggestion: string;
+}
+
+interface BriefingResult {
+  customer_name: string;
+  generated_at: string;
+  triggered_count: number;
+  sections: BriefingSection[];
+  summary: string;
+}
+
+const CATEGORY_ICONS: Record<string, string> = {
+  trim_alert: "⚠️",
+  competitor: "🏁",
+  incentive: "💰",
+  rate: "📊",
+  inventory: "🚗",
+  lease: "📋",
+};
+
+function catIcon(cat: string): string {
+  return CATEGORY_ICONS[cat.toLowerCase()] ?? "📌";
+}
+
+export function PreVisitPanel({
+  customer,
+  onBack,
+  onClose,
+}: {
+  customer: SimpleCustomer;
+  onBack: () => void;
+  onClose?: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<BriefingResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const abortRef = useRef(false);
+
+  async function generate() {
+    setLoading(true);
+    setError(null);
+    abortRef.current = false;
+    try {
+      const data = await api.post<BriefingResult>(`/customers/${customer.id}/briefing`, {});
+      if (!abortRef.current) setResult(data);
+    } catch (err: unknown) {
+      if (!abortRef.current)
+        setError(err instanceof Error ? err.message : "Briefing generation failed");
+    } finally {
+      if (!abortRef.current) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    generate();
+    return () => {
+      abortRef.current = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer.id]);
+
+  return (
+    <>
+      <PanelHeader title={`📋 ${customer.full_name}`} onBack={onBack} onClose={onClose} />
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+        {loading && !result && (
+          <div style={{ padding: "40px 0", textAlign: "center", color: "#9ca3af", fontSize: 13 }}>
+            <div style={{ fontSize: 22, marginBottom: 8 }}>✦</div>
+            Running checks against support docs…
+          </div>
+        )}
+
+        {error && (
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "#fef2f2",
+              border: "1px solid #fca5a5",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "#dc2626",
+            }}
+          >
+            {error}
+            <button
+              onClick={generate}
+              style={{
+                marginLeft: 10,
+                padding: "3px 10px",
+                background: "#fff",
+                border: "1px solid #d1d5db",
+                borderRadius: 6,
+                cursor: "pointer",
+                fontSize: 12,
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {result && (
+          <>
+            {result.sections.length === 0 ? (
+              <div
+                style={{
+                  padding: "20px 14px",
+                  background: "#f9fafb",
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  color: "#6b7280",
+                  textAlign: "center",
+                }}
+              >
+                No alerts triggered based on current support docs.
+              </div>
+            ) : (
+              result.sections.map((sec) => (
+                <div
+                  key={sec.doc_id}
+                  style={{
+                    background: "#fff",
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 8,
+                    padding: "12px 14px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontWeight: 700,
+                      fontSize: 11,
+                      color: "#374151",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{catIcon(sec.category)}</span>
+                    {sec.title}
+                  </div>
+                  <p style={{ margin: 0, fontSize: 13, color: "#1f2937", lineHeight: 1.6 }}>
+                    {sec.alert}
+                  </p>
+                  {sec.suggestion && (
+                    <p style={{ margin: 0, fontSize: 12, color: "#2563eb", fontWeight: 500, lineHeight: 1.5 }}>
+                      → {sec.suggestion}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
+              <span style={{ fontSize: 11, color: "#9ca3af" }}>Generated {result.generated_at}</span>
+              <button
+                onClick={generate}
+                disabled={loading}
+                style={{
+                  padding: "5px 14px",
+                  background: "#fff",
+                  border: "1px solid #d1d5db",
+                  borderRadius: 6,
+                  cursor: loading ? "default" : "pointer",
+                  fontSize: 12,
+                  color: "#374151",
+                }}
+              >
+                {loading ? "Regenerating…" : "Regenerate"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </>
   );

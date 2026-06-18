@@ -10,6 +10,7 @@ import {
   StylePanel,
   RulePanel,
   EmailPanel,
+  PreVisitPanel,
 } from "./components/AgentPanels";
 import NavBar from "./components/NavBar";
 import LoginPage from "./routes/LoginPage";
@@ -22,6 +23,7 @@ import StylePage from "./routes/StylePage";
 import OutreachPage from "./routes/OutreachPage";
 import InboxPage from "./routes/InboxPage";
 import SettingsPage from "./routes/SettingsPage";
+import SupportInfoPage from "./routes/SupportInfoPage";
 
 function ProtectedLayout() {
   const { token, mustChangePassword } = useAuth();
@@ -85,7 +87,7 @@ function ProtectedLayout() {
             <AgentChat
               mode="page"
               chatMode="assistant"
-              onClose={handleSidebarBack}
+              onClose={handleSidebarClose}
               onSwitchAgent={setSidebarAgent}
               currentAgent="assistant"
             />
@@ -95,7 +97,7 @@ function ProtectedLayout() {
             <AgentChat
               mode="page"
               chatMode="intake"
-              onClose={handleSidebarBack}
+              onClose={handleSidebarClose}
               onSwitchAgent={setSidebarAgent}
               currentAgent="intake"
             />
@@ -115,7 +117,7 @@ function ProtectedLayout() {
               chatMode="update"
               customerId={sidebarCustomer.id}
               customerName={sidebarCustomer.full_name}
-              onClose={handleSidebarBack}
+              onClose={handleSidebarClose}
               onSwitchAgent={setSidebarAgent}
               currentAgent="update"
             />
@@ -131,6 +133,22 @@ function ProtectedLayout() {
 
           {sidebarAgent === "email" && (
             <EmailPanel onBack={handleSidebarBack} onClose={handleSidebarClose} />
+          )}
+
+          {sidebarAgent === "pre_visit" && !sidebarCustomer && (
+            <CustomerSearch
+              onSelect={setSidebarCustomer}
+              onBack={handleSidebarBack}
+              onClose={handleSidebarClose}
+            />
+          )}
+
+          {sidebarAgent === "pre_visit" && sidebarCustomer && (
+            <PreVisitPanel
+              customer={sidebarCustomer}
+              onBack={handleSidebarBack}
+              onClose={handleSidebarClose}
+            />
           )}
         </div>
       </div>
@@ -159,6 +177,7 @@ export default function App() {
           <Route path="/outreach" element={<OutreachPage />} />
           <Route path="/inbox" element={<InboxPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/support-info" element={<SupportInfoPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/customers" replace />} />
       </Routes>

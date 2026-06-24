@@ -13,3 +13,4 @@ frontend/dist/
 .mypy_cache/
 *.db
 *.sqlite3
+local_model/**/*.gguf

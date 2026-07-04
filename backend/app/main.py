@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -27,6 +28,15 @@ app.include_router(outreach_router, prefix="/api/outreach")
 app.include_router(settings_router, prefix="/api/settings")
 app.include_router(support_docs_router, prefix="/api/support-docs")
 
-_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
-if _dist.exists():
-    app.mount("/", StaticFiles(directory=str(_dist), html=True), name="static")
+_dist_candidates: list[Path] = []
+_env_dist = os.getenv("FRONTEND_DIST")
+if _env_dist:
+    _dist_candidates.append(Path(_env_dist))
+_dist_candidates.extend([
+    Path(__file__).parent.parent / "static",
+    Path(__file__).parent.parent.parent / "frontend" / "dist",
+])
+for _dist in _dist_candidates:
+    if _dist.is_dir():
+        app.mount("/", StaticFiles(directory=str(_dist), html=True), name="static")
+        break

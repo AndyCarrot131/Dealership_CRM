@@ -1,0 +1,12 @@
+.env
+.git
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.venv
+**/venv
+frontend/node_modules
+frontend/dist
+local_model/**/*.gguf
+DB_export
+.agents

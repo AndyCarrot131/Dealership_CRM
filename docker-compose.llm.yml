@@ -1,0 +1,15 @@
+services:
+  local_llm:
+    build: ./local_model/qwen3-vl-4b
+    container_name: dealer_crm_local_llm
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./local_model/qwen3-vl-4b:/models
+    networks:
+      - dealer_crm_net
+    restart: unless-stopped
+
+networks:
+  dealer_crm_net:
+    external: true

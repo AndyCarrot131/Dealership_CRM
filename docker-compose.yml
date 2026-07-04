@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16
+    container_name: dealer_crm_db
     environment:
       POSTGRES_DB: dealer_crm
       POSTGRES_USER: crm_app
@@ -14,24 +15,32 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      - dealer_crm_net
 
-  backend:
-    build: ./backend
-    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8756
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.service
+    container_name: dealer_crm_app
     environment:
       DATABASE_URL: postgresql+asyncpg://crm_app:${DB_PASSWORD}@db:5432/dealer_crm
       JWT_SECRET: ${JWT_SECRET}
-      LLM_BASE_URL: ${LLM_BASE_URL}
-      LLM_API_KEY: ${LLM_API_KEY}
-      LLM_MODEL: ${LLM_MODEL}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://local_llm:8080/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-no-key-needed}
+      LLM_MODEL: ${LLM_MODEL:-Qwen3VL-4B-Instruct-Q4_K_M.gguf}
     ports:
       - "8756:8756"
-    volumes:
-      - ./backend:/app
     depends_on:
       db:
         condition: service_healthy
-    working_dir: /app
+    networks:
+      - dealer_crm_net
+    restart: unless-stopped
 
 volumes:
   pgdata:
+
+networks:
+  dealer_crm_net:
+    external: true

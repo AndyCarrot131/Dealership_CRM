@@ -30,9 +30,9 @@ def upgrade() -> None:
         ),
     )
 
-    llm_base_url = os.getenv("llm_base_url", os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"))
-    llm_api_key = os.getenv("llm_api_key", os.getenv("LLM_API_KEY", ""))
-    llm_model = os.getenv("llm_model", os.getenv("LLM_MODEL", "gpt-4o"))
+    llm_base_url = os.getenv("llm_base_url", os.getenv("LLM_BASE_URL", "http://local_llm:8080/v1"))
+    llm_api_key = os.getenv("llm_api_key", os.getenv("LLM_API_KEY", "no-key-needed"))
+    llm_model = os.getenv("llm_model", os.getenv("LLM_MODEL", "Qwen3VL-4B-Instruct-Q4_K_M.gguf"))
 
     op.execute(
         sa.text(

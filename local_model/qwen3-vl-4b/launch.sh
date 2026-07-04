@@ -1,5 +1,6 @@
 #!/bin/bash
-# Qwen3-VL-4B-Instruct — llama-server launch
+# Qwen3-VL-4B-Instruct — llama-server launch (host-native)
+# For Docker, use: ../../run_local_llm.sh
 # Repo: Qwen/Qwen3-VL-4B-Instruct-GGUF
 #
 # Download first:

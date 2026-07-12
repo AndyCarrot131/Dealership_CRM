@@ -28,6 +28,7 @@ class LLMClient:
         timeout: float = 60,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        chat_template_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cfg = self._config
         url = f"{cfg.base_url.rstrip('/')}/chat/completions"
@@ -36,6 +37,8 @@ class LLMClient:
             payload["max_tokens"] = max_tokens
         if temperature is not None:
             payload["temperature"] = temperature
+        if chat_template_kwargs is not None:
+            payload["chat_template_kwargs"] = chat_template_kwargs
         if tools:
             payload["tools"] = tools
             if not cfg.is_local:

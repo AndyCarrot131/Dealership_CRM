@@ -15,7 +15,19 @@ ALLOWED_COLUMNS = frozenset(
 )
 
 ALLOWED_OPERATORS = frozenset(
-    {"eq", "ne", "lt", "lte", "gt", "gte", "in", "days_ago_gte", "days_ago_lte"}
+    {
+        "eq",
+        "ne",
+        "lt",
+        "lte",
+        "gt",
+        "gte",
+        "in",
+        "days_ago_gte",
+        "days_ago_lte",
+        "days_from_now_gte",
+        "days_from_now_lte",
+    }
 )
 
 _FILTER_SCHEMA: dict[str, Any] = {
@@ -37,7 +49,9 @@ _FILTER_SCHEMA: dict[str, Any] = {
                         "enum": sorted(ALLOWED_OPERATORS),
                         "description": (
                             "Comparison operator. "
-                            "days_ago_gte/days_ago_lte compare against (now - N days)"
+                            "days_ago_gte/days_ago_lte compare against (today - N days); "
+                            "days_from_now_gte/days_from_now_lte compare against "
+                            "(today + N days)"
                         ),
                     },
                     "val": {
@@ -71,8 +85,13 @@ Available operators: {', '.join(sorted(ALLOWED_OPERATORS))}
 Notes:
 - days_ago_gte(N) means "the date was at least N days ago" (i.e., old / not recently contacted)
 - days_ago_lte(N) means "the date was at most N days ago" (i.e., recently)
+- days_from_now_gte(N) means "the date is at least N days in the future"
+- days_from_now_lte(N) means "the date is at most N days in the future"
 - For ownership_type use: own, lease, or finance
 - For lease_end_date use ISO date strings (YYYY-MM-DD)
+- Keep relative future windows relative: "within/in the next N months" means
+  lease_end_date >= days_from_now_gte(0) AND lease_end_date <=
+  days_from_now_lte(N * 30). Do not invent an absolute calendar date.
 - Always use AND for independent conditions unless the user explicitly means OR
 
 Only call parse_outreach_rule with a valid predicate tree."""

@@ -28,7 +28,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       LLM_BASE_URL: ${LLM_BASE_URL:-http://local_llm:8080/v1}
       LLM_API_KEY: ${LLM_API_KEY:-no-key-needed}
-      LLM_MODEL: ${LLM_MODEL:-Qwen3VL-4B-Instruct-Q4_K_M.gguf}
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5-4b-instruct-Q4_K_M.gguf}
     ports:
       - "8756:8756"
     depends_on:

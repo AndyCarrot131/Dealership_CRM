@@ -1,4 +1,6 @@
 """Unit tests for the outreach filter compiler — the SQL safety boundary."""
+from datetime import date
+
 import pytest
 from sqlalchemy.dialects import postgresql
 
@@ -80,6 +82,35 @@ def test_days_ago_gte_includes_never_contacted():
     }
     sql = _compile_str(tree)
     assert "IS NULL" in sql
+
+
+def test_future_lease_window_excludes_expired_leases(monkeypatch):
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 7, 12)
+
+    monkeypatch.setattr("app.services.filter_compiler.date", FixedDate)
+    tree = {
+        "op": "and",
+        "conditions": [
+            {
+                "col": "customer_car.lease_end_date",
+                "cmp": "days_from_now_gte",
+                "val": 0,
+            },
+            {
+                "col": "customer_car.lease_end_date",
+                "cmp": "days_from_now_lte",
+                "val": 180,
+            },
+        ],
+    }
+
+    preview = preview_sql(tree)
+
+    assert "customer_car.lease_end_date >= '2026-07-12'" in preview
+    assert "customer_car.lease_end_date <= '2027-01-08'" in preview
 
 
 def test_or_op_joins_with_or():

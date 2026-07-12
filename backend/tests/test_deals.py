@@ -7,7 +7,13 @@ from unittest.mock import patch
 import pytest
 
 from app.api import deals as deals_api
-from app.agents.deal_extractor import _clean, _parse_json_content, _to_date, _to_number
+from app.agents.deal_extractor import (
+    _clean,
+    _parse_json_content,
+    _to_date,
+    _to_number,
+    run_deal_extractor,
+)
 from app.config import settings
 from app.main import app
 from app.models.customer import Customer, CustomerCar
@@ -510,6 +516,89 @@ _EXTRACTION_JSON = {
 }
 
 
+async def test_high_confidence_consistent_extraction_skips_expensive_retries():
+    high_confidence_lease = dict(_EXTRACTION_JSON)
+    high_confidence_lease.update(
+        {
+            "deal_type": "lease",
+            "confidence": 0.95,
+            "term": 48,
+            "num_payments": 104,
+            "payment_frequency": "biweekly",
+            "base_payment": 220.25,
+            "payment_amount": 253.29,
+            "rate_pct": 5.99,
+            "capital_cost": 44119.45,
+            "cash_down": 8781.75,
+        }
+    )
+    fake = FakeLLM(
+        [
+            _text_response(json.dumps(high_confidence_lease)),
+            _text_response(json.dumps({})),
+        ]
+    )
+
+    result = await run_deal_extractor(b"image", "image/jpeg", fake)
+
+    assert result["extracted"]["confidence"] == 0.95
+    assert result["raw"]["image_pass"] == "original"
+    assert len(fake.calls) == 2
+
+
+async def test_high_confidence_finance_keeps_identity_and_merges_focused_payment():
+    primary = dict(_EXTRACTION_JSON)
+    primary.update(
+        {
+            "confidence": 0.95,
+            "vin": "3VV2B7AX1LM172726",
+            "stock_number": "LM172726",
+            "payment_amount": None,
+            "base_payment": None,
+            "line_items": [
+                {"item_name": "Discount in lieu of PPM", "category": "discount", "amount": -700},
+                {"item_name": "Discount", "category": "discount", "amount": -2000},
+                {"item_name": "Admin Fee", "category": "admin", "amount": 69.95},
+                {"item_name": "Admin Fee", "category": "admin", "amount": 430},
+                {"item_name": "Other fees", "category": "other", "amount": 528.20},
+            ],
+        }
+    )
+    focused = {
+        "deal_type": "finance",
+        "rate_pct": 0,
+        "term": 72,
+        "payment_frequency": "monthly",
+        "num_payments": 72,
+        "base_payment": 394.12,
+        "payment_amount": 394.12,
+        "capital_cost": 28376.37,
+        "cash_down": 2000,
+        "drive_off_total": 30376.37,
+    }
+    fake = FakeLLM(
+        [
+            _text_response(json.dumps(primary)),
+            _text_response(json.dumps(focused)),
+            _text_response(json.dumps({"discount": -2000, "line_items": []})),
+        ]
+    )
+
+    result = await run_deal_extractor(b"image", "image/jpeg", fake)
+    extracted = result["extracted"]
+
+    assert extracted["model"] == "Tiguan"
+    assert extracted["model_year"] == 2020
+    assert extracted["vin"] == "3VV2B7AX1LM172726"
+    assert extracted["stock_number"] == "LM172726"
+    assert extracted["payment_amount"] == 394.12
+    assert extracted["capital_cost"] == 28376.37
+    assert extracted["discount"] == -2700
+    assert extracted["fees_total"] == 1028.15
+    assert extracted["total_with_tax"] == 30376.37
+    assert len(fake.calls) == 3
+
+
 # ─── /extract ───────────────────────────────────────────────────────────────────
 
 
@@ -545,6 +634,7 @@ async def test_extract_returns_preview_and_candidates(
     assert (uploads_tmp / "deals" / body["image_filename"]).exists()
     # vision call used extended limits
     assert fake.calls[0]["timeout"] == 300
+    assert fake.calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 async def test_extract_uses_best_pseudo_scan_when_primary_is_bad(

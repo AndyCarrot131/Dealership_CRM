@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import sqlalchemy as sa
@@ -58,6 +58,12 @@ def _compile_condition(cond: dict[str, Any]) -> sa.ColumnElement:
     if cmp == "days_ago_lte":
         threshold = _now() - timedelta(days=int(val))
         return col >= threshold
+    if cmp == "days_from_now_gte":
+        threshold = date.today() + timedelta(days=int(val))
+        return col >= threshold
+    if cmp == "days_from_now_lte":
+        threshold = date.today() + timedelta(days=int(val))
+        return col <= threshold
     raise ValueError(f"Unknown operator: {cmp!r}")
 
 

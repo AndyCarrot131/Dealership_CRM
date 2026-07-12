@@ -479,6 +479,7 @@ async def _extract_primary_pass(
         timeout=300,  # local vision inference can take minutes
         temperature=0.0,
         max_tokens=4096,
+        chat_template_kwargs={"enable_thinking": False},
     )
     message = response["choices"][0]["message"]
     return _parse_model_message(message)
@@ -497,6 +498,12 @@ def _score_extraction_candidate(extracted: dict[str, Any], parsed: dict[str, Any
                 score += 5
     if extracted.get("line_items"):
         score += min(10, len(extracted["line_items"]) * 2)
+    if extracted.get("vin"):
+        score += 12
+    if extracted.get("stock_number"):
+        score += 5
+    if extracted.get("trades"):
+        score += 12
     if extracted.get("confidence") is not None:
         score += int(float(extracted["confidence"]) * 10)
     if _terms_look_suspicious(extracted, parsed):
@@ -649,6 +656,13 @@ def _payments_look_suspicious(out: dict[str, Any]) -> bool:
         return deal_type == "lease"
     if deal_type == "lease" and base is not None and not _payment_pair_looks_valid(base, payment):
         return True
+    if (
+        deal_type == "finance"
+        and out.get("rate_pct") == 0
+        and freq == "monthly"
+        and out.get("term") == out.get("num_payments")
+    ):
+        return False
     return _looks_computed_payment(
         payment, out.get("selling_price"), out.get("capital_cost"), out.get("term")
     )
@@ -711,6 +725,11 @@ def _pick_best_base_payment(parsed: dict[str, Any]) -> float | None:
 
 def _reconcile_payment_pair(out: dict[str, Any], parsed: dict[str, Any]) -> None:
     """Fix equal/wrong base+total using HST-linked pairs from raw model output."""
+    # Finance sheets show one monthly payment, not lease-style pre/post-HST
+    # payment rows. Searching all dollar values for an HST ratio can mistake
+    # an admin fee for the payment total.
+    if out.get("deal_type") != "lease":
+        return
     pair_base, pair_total = _find_hst_payment_pair(parsed)
     if pair_total is None:
         return
@@ -978,7 +997,7 @@ def _reconcile_payment_terms(out: dict[str, Any], parsed: dict[str, Any]) -> Non
     term = out.get("term")
     payment = out.get("payment_amount")
 
-    if _payments_look_suspicious(out) or _looks_computed_payment(payment, selling, capital, term):
+    if _payments_look_suspicious(out):
         alt_payment = _pick_best_payment_amount(
             parsed, selling, term,
             frequency=out.get("payment_frequency"),
@@ -987,7 +1006,9 @@ def _reconcile_payment_terms(out: dict[str, Any], parsed: dict[str, Any]) -> Non
         if alt_payment is not None:
             out["payment_amount"] = alt_payment
             payment = alt_payment
-        pair_base, pair_total = _find_hst_payment_pair(parsed)
+        pair_base, pair_total = (
+            _find_hst_payment_pair(parsed) if deal_type == "lease" else (None, None)
+        )
         if pair_total is not None:
             out["payment_amount"] = pair_total
             out["base_payment"] = pair_base
@@ -1222,13 +1243,18 @@ def _pricing_looks_suspicious(out: dict[str, Any]) -> bool:
 
     if selling is not None and selling > 50000:
         return True
-    if capital is not None and selling is not None and capital < selling:
+    if (
+        capital is not None
+        and selling is not None
+        and capital < selling
+        and out.get("deal_type") == "lease"
+    ):
         return True
     if capital is not None and capital < 35000 and out.get("deal_type") == "lease":
         return True
     if cash is not None and 0 < cash < 3000 and out.get("deal_type") == "lease":
         return True
-    if drive is not None and drive > 25000:
+    if drive is not None and drive > 25000 and out.get("deal_type") == "lease":
         return True
     if discount is not None and discount < -3000:
         return True
@@ -1340,10 +1366,38 @@ def _reconcile_pricing_fields(out: dict[str, Any], parsed: dict[str, Any]) -> No
             item["amount"] for item in items
             if item.get("category") == "discount" or item.get("amount", 0) < 0
         )
-        if fee_sum > 0 and (out.get("fees_total") is None or _looks_placeholder_amount(out.get("fees_total"))):
+        if fee_sum > 0:
             out["fees_total"] = round(fee_sum, 2)
-        if discount_sum < 0 and (out.get("discount") is None or out.get("discount") < -3000):
+        if discount_sum < 0:
             out["discount"] = round(discount_sum, 2)
+
+    if out.get("deal_type") == "finance":
+        selling = out.get("selling_price")
+        discount = out.get("discount")
+        fees = out.get("fees_total")
+        tax = out.get("tax_total")
+        trade = out.get("trade_equity")
+        if trade in (None, 0) and out.get("trades"):
+            trade = sum(
+                (item.get("allocation") or 0) - (item.get("lien_payout") or 0)
+                for item in out["trades"]
+            )
+        cash_down = out.get("cash_down")
+        if (
+            selling is not None
+            and discount is not None
+            and fees is not None
+            and tax is not None
+            and trade is not None
+            and cash_down is not None
+        ):
+            total_with_tax = selling + discount + fees - trade + tax
+            amount_financed = total_with_tax - cash_down
+            if total_with_tax > 0 and amount_financed > 0:
+                out["trade_equity"] = round(trade, 2)
+                out["total_with_tax"] = round(total_with_tax, 2)
+                out["capital_cost"] = round(amount_financed, 2)
+                out["drive_off_total"] = round(total_with_tax, 2)
 
     # selling_price required for save — if still suspicious, keep best effort from capital/fees.
     if out.get("selling_price") is None or (
@@ -1362,6 +1416,11 @@ def _terms_look_suspicious(out: dict[str, Any], parsed: dict[str, Any]) -> bool:
     payment = out.get("payment_amount")
     if _looks_computed_payment(
         payment, out.get("selling_price"), out.get("capital_cost"), out.get("term")
+    ) and not (
+        out.get("deal_type") == "finance"
+        and out.get("rate_pct") == 0
+        and out.get("payment_frequency") == "monthly"
+        and out.get("term") == out.get("num_payments")
     ):
         return True
     if out.get("deal_type") == "lease" and out.get("payment_frequency") == "semimonthly":
@@ -1411,6 +1470,50 @@ def _merge_parsed(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, An
     return merged
 
 
+def _merge_pricing_pass(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Add focused pricing evidence without replacing reliable full-page fields."""
+    merged = copy.deepcopy(base)
+    for field in _PRICING_FIELDS:
+        value = overlay.get(field)
+        if merged.get(field) in (None, "") and value not in (None, ""):
+            merged[field] = value
+
+    items = list(merged.get("line_items") or [])
+    seen = {
+        (_normalize_key(str(item.get("item_name") or item.get("name") or "")), _to_number(item.get("amount")))
+        for item in items
+        if isinstance(item, dict)
+    }
+    for item in overlay.get("line_items") or []:
+        if not isinstance(item, dict):
+            continue
+        key = (
+            _normalize_key(str(item.get("item_name") or item.get("name") or "")),
+            _to_number(item.get("amount")),
+        )
+        if key not in seen:
+            items.append(item)
+            seen.add(key)
+
+    overlay_discount = _to_number(overlay.get("discount"))
+    discount_amounts = {
+        _to_number(item.get("amount"))
+        for item in items
+        if isinstance(item, dict)
+        and (
+            item.get("category") == "discount"
+            or (_to_number(item.get("amount")) or 0) < 0
+        )
+    }
+    if overlay_discount is not None and overlay_discount < 0 and overlay_discount not in discount_amounts:
+        items.append(
+            {"item_name": "Discount", "category": "discount", "amount": overlay_discount}
+        )
+    if items:
+        merged["line_items"] = items
+    return merged
+
+
 async def _extract_lease_table(
     image_bytes: bytes, mime: str, llm: LLMClient
 ) -> dict[str, Any]:
@@ -1439,6 +1542,7 @@ async def _extract_lease_table(
         timeout=300,
         temperature=0.0,
         max_tokens=2048,
+        chat_template_kwargs={"enable_thinking": False},
     )
     return _parse_model_message(response["choices"][0]["message"])
 
@@ -1472,6 +1576,7 @@ async def _extract_pricing_block(
         timeout=300,
         temperature=0.0,
         max_tokens=2048,
+        chat_template_kwargs={"enable_thinking": False},
     )
     return _parse_model_message(response["choices"][0]["message"])
 
@@ -1763,9 +1868,15 @@ async def run_deal_extractor(image_bytes: bytes, mime: str, llm: LLMClient) -> d
     extracted = _clean(parsed)
     best_name = "original"
     best_score = _score_extraction_candidate(extracted, parsed)
+    confidence = float(extracted.get("confidence") or 0)
+    terms_suspicious = _terms_look_suspicious(extracted, parsed)
+    identity_confident = confidence >= 0.9 and all(
+        extracted.get(field) not in (None, "")
+        for field in ("make", "model", "model_year", "vin")
+    )
 
     # Retry with pseudo-scan variants only when primary extraction looks weak.
-    if _terms_look_suspicious(extracted, parsed) or _pricing_looks_suspicious(extracted):
+    if not identity_confident and (terms_suspicious or _pricing_looks_suspicious(extracted)):
         for scan_name, scan_bytes, scan_mime in _build_pseudo_scans(image_bytes):
             try:
                 scan_parsed = await _extract_primary_pass(scan_bytes, scan_mime, llm)
@@ -1783,7 +1894,8 @@ async def run_deal_extractor(image_bytes: bytes, mime: str, llm: LLMClient) -> d
 
     deal_type = extracted.get("deal_type")
     needs_focused_pass = deal_type in ("lease", "finance") and (
-        deal_type == "lease" or _terms_look_suspicious(extracted, parsed)
+        extracted.get("payment_amount") is None
+        or _terms_look_suspicious(extracted, parsed)
     )
     if needs_focused_pass:
         try:
@@ -1804,11 +1916,13 @@ async def run_deal_extractor(image_bytes: bytes, mime: str, llm: LLMClient) -> d
         except Exception:
             pass
 
-    # Focused pricing pass when totals look invented or mis-mapped.
-    if _pricing_looks_suspicious(extracted):
+    # A focused pricing pass can reveal a second discount or fee hidden in the
+    # dense column. Merge it conservatively so it cannot replace vehicle/trade
+    # identity or the focused finance terms.
+    if deal_type in ("lease", "finance"):
         try:
             pricing = await _extract_pricing_block(image_bytes, mime, llm)
-            parsed = _merge_parsed(parsed, pricing)
+            parsed = _merge_pricing_pass(parsed, pricing)
             parsed["pricing_pass"] = pricing
             extracted = _clean(parsed)
         except Exception:

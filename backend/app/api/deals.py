@@ -221,6 +221,7 @@ async def _llm_for_extract(
             )
     else:
         llm_config = await resolve_llm_config(db, current_user.id)
+
     return LLMClient(llm_config)
 
 

@@ -631,9 +631,12 @@ async def compose_email(
             {"role": "user", "content": user_msg},
         ],
         # Outreach drafts are short, structured responses. Without an output
-        # limit Qwen may spend the entire request timeout generating thousands
+        # Some models may spend the entire request timeout generating thousands
         # of reasoning tokens before returning the JSON email.
-        max_tokens=1000,
+        max_tokens=2000,
+        temperature=0.2,
+        reasoning_effort="low",
+        response_format={"type": "json_object"},
         chat_template_kwargs={"enable_thinking": False},
     )
     content = response["choices"][0]["message"].get("content", "")

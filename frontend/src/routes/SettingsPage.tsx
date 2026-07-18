@@ -20,7 +20,7 @@ interface LLMProfile {
   api_key_masked: string;
   model: string;
   is_active: boolean;
-  is_local: boolean;
+  is_system: boolean;
   created_at: string;
 }
 
@@ -38,7 +38,6 @@ interface ProfileForm {
   base_url: string;
   api_key: string;
   model: string;
-  is_local: boolean;
 }
 
 interface TestResult {
@@ -55,7 +54,7 @@ interface NewUserForm {
 }
 
 const EMPTY_NEW_USER: NewUserForm = { email: "", name: "", role: "sales", password: "" };
-const EMPTY_PROFILE_FORM: ProfileForm = { name: "", base_url: "", api_key: "", model: "", is_local: false };
+const EMPTY_PROFILE_FORM: ProfileForm = { name: "", base_url: "", api_key: "", model: "" };
 
 export default function SettingsPage() {
   const { role, mustChangePassword, updateMustChange } = useAuth();
@@ -81,6 +80,7 @@ export default function SettingsPage() {
   // LLM tab
   const [profiles, setProfiles] = useState<LLMProfile[]>([]);
   const [profilesLoading, setProfilesLoading] = useState(false);
+  const [geminiModels, setGeminiModels] = useState<string[]>(["gemini-3.5-flash"]);
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState<ProfileForm>(EMPTY_PROFILE_FORM);
   const [addError, setAddError] = useState<string | null>(null);
@@ -110,6 +110,7 @@ export default function SettingsPage() {
     if (tab === "users" && isManager) loadUsers();
     if (tab === "llm") {
       loadProfiles();
+      loadGeminiModels();
       if (isManager) loadLlmLogs();
     }
   }, [tab]);
@@ -135,6 +136,15 @@ export default function SettingsPage() {
       // list stays empty
     } finally {
       setProfilesLoading(false);
+    }
+  }
+
+  async function loadGeminiModels() {
+    try {
+      const models = await api.get<string[]>("/settings/llm/gemini-models");
+      if (models.length) setGeminiModels(models);
+    } catch {
+      // Keep the stable built-in model when Google is temporarily unavailable.
     }
   }
 
@@ -242,7 +252,6 @@ export default function SettingsPage() {
         base_url: form.base_url,
         api_key: form.api_key,
         model: form.model,
-        is_local: form.is_local,
       });
       setResult(result);
     } catch (err) {
@@ -290,7 +299,7 @@ export default function SettingsPage() {
 
   function startEdit(p: LLMProfile) {
     setEditingId(p.id);
-    setEditForm({ name: p.name, base_url: p.base_url, api_key: "", model: p.model, is_local: p.is_local });
+    setEditForm({ name: p.name, base_url: p.base_url, api_key: "", model: p.model });
     setEditError(null);
     setEditTestResult(null);
   }
@@ -615,24 +624,8 @@ export default function SettingsPage() {
                   value={addForm.base_url}
                   onChange={(e) => setAddForm((f) => ({ ...f, base_url: e.target.value }))}
                   required
-                  placeholder={addForm.is_local ? "http://127.0.0.1:8080/v1" : "https://api.openai.com/v1"}
+                  placeholder="https://generativelanguage.googleapis.com/v1beta/openai"
                 />
-                <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", fontSize: 13, color: "var(--color-text-3)" }}>
-                  <input
-                    type="checkbox"
-                    checked={addForm.is_local}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setAddForm((f) => ({
-                        ...f,
-                        is_local: checked,
-                        base_url: checked && !f.base_url ? "http://127.0.0.1:8080/v1" : f.base_url,
-                        api_key: checked && !f.api_key ? "no-key-needed" : f.api_key,
-                      }));
-                    }}
-                  />
-                  Local server
-                </label>
               </div>
               <div>
                 <label className="form-label">API Key</label>
@@ -643,7 +636,7 @@ export default function SettingsPage() {
                   onChange={(e) => setAddForm((f) => ({ ...f, api_key: e.target.value }))}
                   required
                   autoComplete="off"
-                  placeholder={addForm.is_local ? "no-key-needed" : "sk-..."}
+                  placeholder="Gemini API key"
                 />
               </div>
               <div>
@@ -653,8 +646,12 @@ export default function SettingsPage() {
                   value={addForm.model}
                   onChange={(e) => setAddForm((f) => ({ ...f, model: e.target.value }))}
                   required
-                  placeholder="gpt-4o"
+                  placeholder="gemini-3.5-flash"
+                  list="gemini-model-options"
                 />
+                <datalist id="gemini-model-options">
+                  {geminiModels.map((model) => <option key={model} value={model} />)}
+                </datalist>
               </div>
               {addError && <div className="notice notice-danger">{addError}</div>}
               {addTestResult && (
@@ -708,8 +705,8 @@ export default function SettingsPage() {
                     }}
                   >
                     <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>{p.name}</span>
-                    {p.is_local && (
-                      <span className="badge badge-muted" style={{ fontSize: 11 }}>Local</span>
+                    {p.is_system && (
+                      <span className="badge badge-muted" style={{ fontSize: 11 }}>Environment</span>
                     )}
                     {p.is_active && (
                       <span className="badge badge-success" style={{ fontSize: 11 }}>Active</span>
@@ -744,7 +741,7 @@ export default function SettingsPage() {
                     >
                       {editingId === p.id ? "Cancel" : "Edit"}
                     </button>
-                    {profiles.length > 1 && (
+                    {profiles.length > 1 && !p.is_system && (
                       <button
                         className="btn btn-danger-ghost"
                         style={{ fontSize: 12, padding: "3px 10px" }}
@@ -789,6 +786,7 @@ export default function SettingsPage() {
                           value={editForm.name}
                           onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
                           required
+                          disabled={p.is_system}
                         />
                       </div>
                       <div>
@@ -798,17 +796,10 @@ export default function SettingsPage() {
                           value={editForm.base_url}
                           onChange={(e) => setEditForm((f) => ({ ...f, base_url: e.target.value }))}
                           required
+                          disabled={p.is_system}
                         />
-                        <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, cursor: "pointer", fontSize: 13, color: "var(--color-text-3)" }}>
-                          <input
-                            type="checkbox"
-                            checked={editForm.is_local}
-                            onChange={(e) => setEditForm((f) => ({ ...f, is_local: e.target.checked }))}
-                          />
-                          Local server
-                        </label>
                       </div>
-                      <div>
+                      {!p.is_system && <div>
                         <label className="form-label">API Key</label>
                         <input
                           className="input"
@@ -818,15 +809,29 @@ export default function SettingsPage() {
                           autoComplete="off"
                           placeholder={`Current: ${p.api_key_masked} — leave blank to keep`}
                         />
-                      </div>
+                      </div>}
                       <div>
                         <label className="form-label">Model</label>
-                        <input
-                          className="input"
-                          value={editForm.model}
-                          onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))}
-                          required
-                        />
+                        {p.is_system ? (
+                          <select
+                            className="input"
+                            value={editForm.model}
+                            onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))}
+                            required
+                          >
+                            {[...new Set([editForm.model, ...geminiModels])].map((model) => (
+                              <option key={model} value={model}>{model}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="input"
+                            value={editForm.model}
+                            onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))}
+                            required
+                            list="gemini-model-options"
+                          />
+                        )}
                       </div>
                       {editError && <div className="notice notice-danger">{editError}</div>}
                       {editTestResult && (

@@ -1,0 +1,45 @@
+{
+  "contact_log": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "fixture_contact_1",
+              "type": "function",
+              "function": {
+                "name": "parse_contact_log",
+                "arguments": "{\"channel\":\"call\",\"summary\":\"Customer wants a black Volkswagen Tiguan with heated seats and plans to visit at 10 AM. Budget is approximately $45,000.\",\"customer_name_hint\":\"Fixture Customer\",\"contacted_at\":\"2026-07-17T10:00:00\"}"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "style_summary": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "## Lease maturity\n\n### Subject Line\nUse a direct, friendly vehicle-specific subject.\n\n### Format\nOpen with the customer name, explain three options, then give one clear CTA.\n\n### Style\nWarm, professional and reassuring. End with the sales consultant signature."
+        }
+      }
+    ]
+  },
+  "email_draft": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"subject\":\"Your Tiguan options\",\"body\":\"Hi Fixture Customer,\\n\\nA 2026 Volkswagen Tiguan Highline R-Line is available and fits what we discussed. Would tomorrow at 10 AM work for a closer look?\\n\\nWarm regards,\\nWilson Xing | Sales Consultant\"}"
+        }
+      }
+    ]
+  }
+}

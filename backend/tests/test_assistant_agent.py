@@ -160,13 +160,18 @@ async def test_run_assistant_executes_tool_and_answers(db_session, sales_user):
             _text_response("You have 1 customer: Looped Lead."),
         ]
     )
-    reply = await run_assistant(
+    result = await run_assistant(
         [{"role": "user", "content": "How many customers do I have?"}],
         sales_user,
         db_session,
         fake,
     )
-    assert reply == "You have 1 customer: Looped Lead."
+    assert result == {
+        "reply": "You have 1 customer: Looped Lead.",
+        "intent": "assistant",
+        "pending_draft": None,
+        "pending_log": None,
+    }
 
     # Second LLM call must include the tool result with the queried row.
     tool_messages = [m for m in fake.calls[1] if m.get("role") == "tool"]
@@ -181,13 +186,18 @@ async def test_run_assistant_feeds_sql_error_back_to_model(db_session, sales_use
             _text_response("I can only read data, not change it."),
         ]
     )
-    reply = await run_assistant(
+    result = await run_assistant(
         [{"role": "user", "content": "Delete everything"}],
         sales_user,
         db_session,
         fake,
     )
-    assert reply == "I can only read data, not change it."
+    assert result == {
+        "reply": "I can only read data, not change it.",
+        "intent": "assistant",
+        "pending_draft": None,
+        "pending_log": None,
+    }
 
     tool_messages = [m for m in fake.calls[1] if m.get("role") == "tool"]
     assert "error" in tool_messages[0]["content"]
@@ -195,11 +205,14 @@ async def test_run_assistant_feeds_sql_error_back_to_model(db_session, sales_use
 
 async def test_run_assistant_stops_after_max_steps(db_session, sales_user):
     looping = _tool_call_response("SELECT id FROM inventory")
-    fake = FakeLLM([looping] * 5)
-    reply = await run_assistant(
+    fake = FakeLLM([looping] * 8)
+    result = await run_assistant(
         [{"role": "user", "content": "loop forever"}], sales_user, db_session, fake
     )
-    assert "more specific" in reply
+    assert result["intent"] == "assistant"
+    assert result["pending_draft"] is None
+    assert result["pending_log"] is None
+    assert "more specific" in result["reply"]
 
 
 # ─── /api/chat wiring ───────────────────────────────────────────────────────────

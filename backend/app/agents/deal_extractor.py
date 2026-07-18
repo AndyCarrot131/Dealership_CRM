@@ -1,7 +1,6 @@
 """Deal Extractor agent: photo of a printed deal contract -> structured deal JSON.
 
-Designed for OpenAI-compatible vision endpoints (including local llama.cpp/Gemma
-servers) that may not support tool calls, so the model is asked for a strict
+Designed for OpenAI-compatible vision endpoints such as Gemini. The model is asked for a strict
 JSON object in plain content and the result is parsed defensively.
 Prompt rules encode DEAL_TABLE.md §5.
 """
@@ -137,7 +136,7 @@ _TEXT_FIELDS = (
     "transmission", "drivetrain", "lender",
 )
 
-# Local vision models often flatten contact fields to the root object or use
+# Vision models sometimes flatten contact fields to the root object or use
 # dealer-form labels (Cell, Email) instead of the nested customer block we ask for.
 _CUSTOMER_NAME_KEYS = ("name", "full_name", "customer_name", "buyer_name")
 _CUSTOMER_PHONE_KEYS = ("phone", "cell", "mobile", "telephone", "phone_number")
@@ -476,10 +475,11 @@ async def _extract_primary_pass(
                 ],
             },
         ],
-        timeout=300,  # local vision inference can take minutes
+        timeout=300,
         temperature=0.0,
-        max_tokens=4096,
-        chat_template_kwargs={"enable_thinking": False},
+        max_tokens=16384,
+        reasoning_effort="low",
+        response_format={"type": "json_object"},
     )
     message = response["choices"][0]["message"]
     return _parse_model_message(message)
@@ -1541,8 +1541,9 @@ async def _extract_lease_table(
         ],
         timeout=300,
         temperature=0.0,
-        max_tokens=2048,
-        chat_template_kwargs={"enable_thinking": False},
+        max_tokens=8192,
+        reasoning_effort="low",
+        response_format={"type": "json_object"},
     )
     return _parse_model_message(response["choices"][0]["message"])
 
@@ -1575,8 +1576,9 @@ async def _extract_pricing_block(
         ],
         timeout=300,
         temperature=0.0,
-        max_tokens=2048,
-        chat_template_kwargs={"enable_thinking": False},
+        max_tokens=8192,
+        reasoning_effort="low",
+        response_format={"type": "json_object"},
     )
     return _parse_model_message(response["choices"][0]["message"])
 
@@ -1805,7 +1807,7 @@ def _clean(parsed: dict[str, Any]) -> dict[str, Any]:
 
 def _strip_reasoning(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-    # Qwen/DeepSeek-style models often emit JSON after a closing think tag.
+    # Some reasoning models emit JSON after a closing think tag.
     think_close = "</" + "think>"
     if think_close in text:
         _, _, tail = text.partition(think_close)
@@ -1816,7 +1818,7 @@ def _strip_reasoning(text: str) -> str:
 def _parse_json_content(content: str) -> dict[str, Any]:
     """Parse the first JSON object from model text.
 
-    Local models often append a second JSON blob or trailing prose after the
+    Models sometimes append a second JSON blob or trailing prose after the
     deal object; greedy ``\\{.*\\}`` + ``json.loads`` then raises "Extra data".
     """
     clean = _strip_reasoning(content)

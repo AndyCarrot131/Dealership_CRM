@@ -31,12 +31,6 @@ class LLMConfigOut(BaseModel):
     model: str
 
 
-class LLMConfigUpdate(BaseModel):
-    base_url: str
-    api_key: str
-    model: str
-
-
 class LLMProfileOut(BaseModel):
     id: int
     name: str
@@ -44,7 +38,7 @@ class LLMProfileOut(BaseModel):
     api_key_masked: str
     model: str
     is_active: bool
-    is_local: bool
+    is_system: bool
     created_at: datetime
 
 
@@ -53,7 +47,6 @@ class LLMProfileCreate(BaseModel):
     base_url: str
     api_key: str
     model: str
-    is_local: bool = False
 
 
 class LLMProfileUpdate(BaseModel):
@@ -61,14 +54,12 @@ class LLMProfileUpdate(BaseModel):
     base_url: str
     api_key: str  # blank = keep existing
     model: str
-    is_local: bool = False
 
 
 class LLMTestRequest(BaseModel):
     base_url: str
     api_key: str
     model: str
-    is_local: bool = False
 
 
 class LLMTestResult(BaseModel):

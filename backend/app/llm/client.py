@@ -16,9 +16,12 @@ class LLMClient:
         self,
         config: LLMRuntimeConfig,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
+        *,
+        log_requests: bool = True,
     ):
         self._config = config
         self._session_factory = session_factory or AsyncSessionLocal
+        self._log_requests = log_requests
 
     async def chat(
         self,
@@ -28,6 +31,8 @@ class LLMClient:
         timeout: float = 60,
         max_tokens: int | None = None,
         temperature: float | None = None,
+        reasoning_effort: str | None = None,
+        response_format: dict[str, Any] | None = None,
         chat_template_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cfg = self._config
@@ -37,12 +42,15 @@ class LLMClient:
             payload["max_tokens"] = max_tokens
         if temperature is not None:
             payload["temperature"] = temperature
-        if chat_template_kwargs is not None:
-            payload["chat_template_kwargs"] = chat_template_kwargs
+        if reasoning_effort is not None:
+            payload["reasoning_effort"] = reasoning_effort
+        if response_format is not None:
+            payload["response_format"] = response_format
+        # Retained in the shared agent call signature for compatibility; this
+        # provider-specific option is intentionally not sent to Gemini.
         if tools:
             payload["tools"] = tools
-            if not cfg.is_local:
-                payload["tool_choice"] = tool_choice
+            payload["tool_choice"] = tool_choice
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
@@ -56,13 +64,19 @@ class LLMClient:
             resp.raise_for_status()
             data = resp.json()
 
-        await record_llm_request(
-            self._session_factory,
-            url=url,
-            model=cfg.model,
-            request_payload=_redact_images(payload),
-            response_payload=data,
-        )
+        if self._log_requests:
+            await record_llm_request(
+                self._session_factory,
+                url=url,
+                model=cfg.model,
+                request_payload=_redact_images(payload),
+                response_payload=data,
+            )
+        choice = (data.get("choices") or [{}])[0]
+        if choice.get("finish_reason") == "length":
+            raise RuntimeError(
+                f"{cfg.model} exhausted its output token budget before completing the response"
+            )
         return data
 
 

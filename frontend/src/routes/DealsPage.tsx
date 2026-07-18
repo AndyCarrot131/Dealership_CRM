@@ -81,7 +81,6 @@ interface LLMProfile {
   name: string;
   model: string;
   is_active: boolean;
-  is_local: boolean;
 }
 
 const EXTRACT_PROFILE_KEY = "deals_extract_profile_id";

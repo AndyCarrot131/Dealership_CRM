@@ -1,19 +1,27 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 
+
+_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 class Settings(BaseSettings):
     database_url: str
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 8
-    llm_base_url: str = "http://local_llm:8080/v1"
-    llm_api_key: str = "no-key-needed"
-    llm_model: str = "qwen3.5-4b-instruct-Q4_K_M.gguf"
+    gemini_api_key: str
     listen_host: str = "127.0.0.1"
     listen_port: int = 8756
     uploads_dir: str = "uploads"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": _ENV_FILE,
+        "env_file_encoding": "utf-8",
+        # Desktop upgrades may encounter unrelated legacy keys in an existing
+        # environment. Only declared settings are runtime configuration.
+        "extra": "ignore",
+    }
 
 
 settings = Settings()

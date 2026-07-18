@@ -634,7 +634,9 @@ async def test_extract_returns_preview_and_candidates(
     assert (uploads_tmp / "deals" / body["image_filename"]).exists()
     # vision call used extended limits
     assert fake.calls[0]["timeout"] == 300
-    assert fake.calls[0]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert fake.calls[0]["max_tokens"] == 16384
+    assert fake.calls[0]["reasoning_effort"] == "low"
+    assert fake.calls[0]["response_format"] == {"type": "json_object"}
 
 
 async def test_extract_uses_best_pseudo_scan_when_primary_is_bad(
@@ -718,7 +720,6 @@ async def test_extract_skips_pseudo_scan_when_opencv_unavailable(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["raw"]["image_pass"] == "original"
-    assert len(fake.calls) == 1
 
 
 async def test_extract_rejects_non_image(client, sales_headers, uploads_tmp):

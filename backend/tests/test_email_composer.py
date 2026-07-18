@@ -22,7 +22,7 @@ class RecordingLLM:
         }
 
 
-async def test_compose_email_caps_output_and_disables_thinking():
+async def test_compose_email_requests_bounded_structured_low_reasoning_output():
     llm = RecordingLLM()
 
     await compose_email(
@@ -34,6 +34,9 @@ async def test_compose_email_caps_output_and_disables_thinking():
     )
 
     assert llm.kwargs == {
-        "max_tokens": 1000,
+        "max_tokens": 2000,
+        "temperature": 0.2,
+        "reasoning_effort": "low",
+        "response_format": {"type": "json_object"},
         "chat_template_kwargs": {"enable_thinking": False},
     }

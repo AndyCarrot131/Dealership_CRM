@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.dependencies import get_current_user, require_manager
 from app.auth.hashing import hash_password, verify_password
 from app.db import get_db
+from app.llm import GEMINI_API_KEY_REF, GEMINI_BASE_URL, GEMINI_MODEL
 from app.models.llm_log import LLMRequestLog
 from app.models.llm_profile import LLMProfile
 from app.models.user import User
@@ -12,7 +13,6 @@ from app.schemas.settings import (
     ChangePasswordRequest,
     CreateUserRequest,
     LLMConfigOut,
-    LLMConfigUpdate,
     LLMLogItem,
     LLMProfileCreate,
     LLMProfileOut,
@@ -23,8 +23,10 @@ from app.schemas.settings import (
 )
 from app.services.llm_config import (
     activate_profile,
+    env_default_config,
+    list_gemini_models,
     resolve_llm_config,
-    save_llm_config,
+    resolve_llm_profile_config,
     test_llm_connection,
 )
 
@@ -73,12 +75,26 @@ async def create_user(
         must_change_password=True,
     )
     db.add(user)
+    await db.flush()
+    db.add(
+        LLMProfile(
+            user_id=user.id,
+            name="Gemini",
+            base_url=GEMINI_BASE_URL,
+            api_key=GEMINI_API_KEY_REF,
+            model=GEMINI_MODEL,
+            is_active=True,
+            is_system=True,
+        )
+    )
     await db.commit()
     await db.refresh(user)
     return user
 
 
 def _mask_api_key(key: str) -> str:
+    if key == GEMINI_API_KEY_REF:
+        return "GEMINI_API_KEY"
     if len(key) <= 4:
         return "****"
     return "***" + key[-4:]
@@ -92,7 +108,7 @@ def _profile_out(p: LLMProfile) -> LLMProfileOut:
         api_key_masked=_mask_api_key(p.api_key),
         model=p.model,
         is_active=p.is_active,
-        is_local=p.is_local,
+        is_system=p.is_system,
         created_at=p.created_at,
     )
 
@@ -112,26 +128,6 @@ async def get_llm_config(
     )
 
 
-@router.put("/llm")
-async def update_llm_config(
-    body: LLMConfigUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> dict:
-    current = await resolve_llm_config(db, current_user.id)
-    final_api_key = body.api_key.strip() if body.api_key.strip() else current.api_key
-
-    await save_llm_config(
-        db,
-        current_user.id,
-        base_url=body.base_url,
-        api_key=final_api_key,
-        model=body.model,
-    )
-    await db.commit()
-    return {"message": "LLM settings updated"}
-
-
 # ── Profile CRUD ──────────────────────────────────────────────────────────────
 
 @router.get("/llm/profiles", response_model=list[LLMProfileOut])
@@ -145,6 +141,17 @@ async def list_llm_profiles(
         .order_by(LLMProfile.created_at)
     )
     return [_profile_out(p) for p in result.scalars()]
+
+
+@router.get("/llm/gemini-models", response_model=list[str])
+async def get_gemini_models(
+    _: User = Depends(get_current_user),
+) -> list[str]:
+    try:
+        models = await list_gemini_models()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Unable to load Gemini models: {exc}")
+    return models or [GEMINI_MODEL]
 
 
 @router.post("/llm/profiles", response_model=LLMProfileOut, status_code=201)
@@ -165,7 +172,6 @@ async def create_llm_profile(
         api_key=body.api_key,
         model=body.model,
         is_active=not has_existing,
-        is_local=body.is_local,
     )
     db.add(profile)
     await db.commit()
@@ -190,12 +196,12 @@ async def update_llm_profile(
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    profile.name = body.name
-    profile.base_url = body.base_url
     profile.model = body.model
-    profile.is_local = body.is_local
-    if body.api_key.strip():
-        profile.api_key = body.api_key.strip()
+    if not profile.is_system:
+        profile.name = body.name
+        profile.base_url = body.base_url
+        if body.api_key.strip():
+            profile.api_key = body.api_key.strip()
     await db.commit()
     await db.refresh(profile)
     return _profile_out(profile)
@@ -216,6 +222,8 @@ async def delete_llm_profile(
     profile = result.scalar_one_or_none()
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
+    if profile.is_system:
+        raise HTTPException(status_code=400, detail="The Gemini system profile cannot be deleted")
 
     all_result = await db.execute(
         select(LLMProfile).where(LLMProfile.user_id == current_user.id)
@@ -263,7 +271,10 @@ async def test_llm_inline(
     body: LLMTestRequest,
     _: User = Depends(get_current_user),
 ) -> LLMTestResult:
-    result = await test_llm_connection(body.base_url, body.api_key, body.model)
+    api_key = body.api_key
+    if api_key in {GEMINI_API_KEY_REF, "GEMINI_API_KEY"}:
+        api_key = env_default_config().api_key
+    result = await test_llm_connection(body.base_url, api_key, body.model)
     return LLMTestResult(ok=result.ok, message=result.message, response_ms=result.response_ms)
 
 
@@ -283,7 +294,8 @@ async def test_llm_profile(
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
 
-    test = await test_llm_connection(profile.base_url, profile.api_key, profile.model)
+    config = await resolve_llm_profile_config(db, current_user.id, profile_id)
+    test = await test_llm_connection(config.base_url, config.api_key, config.model)
     return LLMTestResult(ok=test.ok, message=test.message, response_ms=test.response_ms)
 
 

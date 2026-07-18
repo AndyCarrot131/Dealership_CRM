@@ -8,9 +8,7 @@ import os
 # Environment must be set before any app module import triggers Settings().
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 os.environ.setdefault("JWT_SECRET", "test-secret-not-for-production")
-os.environ.setdefault("LLM_BASE_URL", "https://llm.test/v1")
-os.environ.setdefault("LLM_API_KEY", "env-default-key")
-os.environ.setdefault("LLM_MODEL", "env-default-model")
+os.environ.setdefault("GEMINI_API_KEY", "env-default-key")
 
 import pytest
 from httpx import ASGITransport, AsyncClient

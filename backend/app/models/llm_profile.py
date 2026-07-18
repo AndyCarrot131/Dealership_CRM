@@ -18,5 +18,5 @@ class LLMProfile(Base):
     api_key: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(String(200), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    is_local: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())

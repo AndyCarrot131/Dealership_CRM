@@ -25,6 +25,7 @@ from sqlalchemy.orm import selectinload
 from app.llm.client import LLMClient
 from app.models.customer import Customer
 from app.models.deal import Deal
+from app.models.inventory import Inventory
 from app.models.support_doc import SupportDoc
 
 # ---------------------------------------------------------------------------
@@ -154,6 +155,21 @@ def _build_customer_history(customer: Customer, deals: list[Deal]) -> dict[str, 
     }
 
 
+def _inventory_to_dict(item: Inventory) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "make": item.make,
+        "model": item.model,
+        "year": item.year,
+        "trim": item.trim,
+        "mileage": item.mileage,
+        "price": str(item.price) if item.price is not None else None,
+        "features": item.features,
+        "notes": item.notes,
+        "status": item.status,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator (public entry point)
 # ---------------------------------------------------------------------------
@@ -186,7 +202,30 @@ async def run_briefing(
     )
     deals = list(deals_result.scalars().all())
 
-    # 3. Load active support docs
+    # 3. Load matching available inventory for appointment preparation.
+    owned_makes = {
+        value.lower()
+        for value in [
+            *(car.make for car in customer.cars),
+            *(deal.make for deal in deals),
+        ]
+        if value
+    }
+    inventory_result = await db.execute(
+        select(Inventory)
+        .where(Inventory.status == "available")
+        .order_by(Inventory.added_at.desc())
+        .limit(20)
+    )
+    available_inventory = list(inventory_result.scalars().all())
+    matching_inventory = [
+        item for item in available_inventory if item.make.lower() in owned_makes
+    ]
+    if not matching_inventory:
+        matching_inventory = available_inventory
+    inventory = [_inventory_to_dict(item) for item in matching_inventory[:5]]
+
+    # 4. Load active support docs
     today = date.today()
     docs_result = await db.execute(
         select(SupportDoc).where(
@@ -202,18 +241,20 @@ async def run_briefing(
             "triggered_count": 0,
             "sections": [],
             "summary": "",
+            "inventory": inventory,
         }
 
-    # 4. Fan-out — one sub-agent call per active support doc (parallel)
+    # 5. Fan-out — one sub-agent call per active support doc (parallel)
     customer_history = _build_customer_history(customer, deals)
+    customer_history["matching_available_inventory"] = inventory
     results: list[dict[str, Any]] = await asyncio.gather(
         *[_run_sub_agent(doc, customer_history, llm) for doc in docs]
     )
 
-    # 5. Filter to triggered only
+    # 6. Filter to triggered only
     triggered = [r for r in results if r["triggered"]]
 
-    # 6. Summariser
+    # 7. Summariser
     summary = await _run_summariser(triggered, customer.full_name, llm)
 
     return {
@@ -222,4 +263,5 @@ async def run_briefing(
         "triggered_count": len(triggered),
         "sections": triggered,
         "summary": summary,
+        "inventory": inventory,
     }

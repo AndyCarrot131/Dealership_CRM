@@ -2,7 +2,6 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-import sqlalchemy as sa
 from sqlalchemy import Date, DateTime, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -17,7 +16,6 @@ class SupportDoc(Base):
         UUID(as_uuid=True),
         primary_key=True,
         default=uuid.uuid4,
-        server_default=sa.text("gen_random_uuid()"),
     )
     category: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)

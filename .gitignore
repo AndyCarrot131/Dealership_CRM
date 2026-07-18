@@ -14,3 +14,4 @@ frontend/dist/
 *.db
 *.sqlite3
 local_model/**/*.gguf
+test_files/

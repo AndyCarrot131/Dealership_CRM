@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from app.llm.client import LLMClient
+from app.services.pii_placeholders import customer_pii_placeholders
 
 _SYSTEM = """You are an AI email-writing assistant for a car dealership sales representative.
 Your task is to compose a personalised outreach email to a specific customer.
@@ -28,6 +29,7 @@ Rules:
 - For lease/finance ending emails, prioritize a lease-end guidance format (upgrade vs buyout vs return) over inventory sales copy
 - Do NOT turn lease-end emails into price-led inventory advertisements unless explicitly requested by the user template/rules
 - Do NOT include a subject line in the body
+- Customer PII appears as opaque [[PII_...]] placeholders; copy those placeholders exactly when personalising the draft
 - Respond ONLY with a JSON object in the exact format:
   {"subject": "...", "body": "..."}"""
 
@@ -617,6 +619,7 @@ async def compose_email(
     email_type: str = "lease_finance_ending",
     custom_template: str | None = None,
 ) -> dict[str, str]:
+    pii = customer_pii_placeholders(customer)
     user_msg = _build_user_message(
         customer,
         inventory_matches,
@@ -625,6 +628,7 @@ async def compose_email(
         email_type=email_type,
         custom_template=custom_template,
     )
+    user_msg = pii.redact(user_msg)
     response = await llm.chat(
         [
             {"role": "system", "content": _SYSTEM},
@@ -639,7 +643,7 @@ async def compose_email(
         response_format={"type": "json_object"},
         chat_template_kwargs={"enable_thinking": False},
     )
-    content = response["choices"][0]["message"].get("content", "")
+    content = pii.restore(response["choices"][0]["message"].get("content", ""))
     # Strip <think>...</think> reasoning blocks emitted by some models
     clean = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
     # Extract the first {...} JSON object from the cleaned text

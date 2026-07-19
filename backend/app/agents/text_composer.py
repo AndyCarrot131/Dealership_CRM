@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from app.llm.client import LLMClient
+from app.services.pii_placeholders import customer_pii_placeholders
 
 _SYSTEM = """You are an AI text-message writing assistant for a car dealership sales representative.
 Your task is to compose a short, personalised SMS text message to a specific customer.
@@ -18,6 +19,7 @@ Rules:
 - Match the representative's voice from the style guide; if unspecified, write in a warm, casual tone
 - Make it feel personal — reference the customer's specific situation
 - No formal subject line, no lengthy sign-off; end with the rep's first name or a brief sign-off only
+- Customer PII appears as opaque [[PII_...]] placeholders; copy those placeholders exactly when personalising the message
 - Respond ONLY with a JSON object in the exact format:
   {"body": "..."}"""
 
@@ -86,14 +88,16 @@ async def compose_text(
     email_type: str = "lease_finance_ending",
     custom_template: str | None = None,
 ) -> dict[str, str]:
+    pii = customer_pii_placeholders(customer)
     user_msg = _build_user_message(customer, inventory_matches, style_md, email_type, custom_template)
+    user_msg = pii.redact(user_msg)
     response = await llm.chat(
         [
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user_msg},
         ]
     )
-    content = response["choices"][0]["message"].get("content", "")
+    content = pii.restore(response["choices"][0]["message"].get("content", ""))
     clean = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
     json_match = re.search(r"\{.*\}", clean, flags=re.DOTALL)
     try:
